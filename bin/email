@@ -11,6 +11,8 @@ import { move } from '../src/commands/move.js';
 import { markRead, markUnread } from '../src/commands/mark.js';
 import { folders } from '../src/commands/folders.js';
 import { search } from '../src/commands/search.js';
+import { sortCommand } from '../src/commands/sort.js';
+import { transactions } from '../src/commands/transactions.js';
 
 program
   .name('email')
@@ -79,5 +81,18 @@ program
   .description('Search emails')
   .option('-n, --number <count>', 'Max results', '20')
   .action(search);
+
+program
+  .command('sort')
+  .description('Auto-sort inbox emails into folders')
+  .option('--dry-run', 'Classify without moving emails')
+  .option('--limit <count>', 'Max emails to process', '100')
+  .action(sortCommand);
+
+program
+  .command('transactions')
+  .description('List recorded transactions')
+  .option('-n, --number <count>', 'Number of transactions', '20')
+  .action(transactions);
 
 program.parse();
