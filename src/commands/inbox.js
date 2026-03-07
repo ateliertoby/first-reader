@@ -6,7 +6,7 @@ export async function inbox(options) {
   const params = { top: count, orderby: 'receivedDateTime desc', select: 'id,subject,from,receivedDateTime,isRead' };
   if (options.unread) params.filter = 'isRead eq false';
 
-  const url = buildGraphUrl('/me/messages', params);
+  const url = buildGraphUrl('/me/mailFolders/inbox/messages', params);
   const result = await graphGet(url);
   const messages = result.value;
 

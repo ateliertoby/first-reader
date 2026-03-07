@@ -28,7 +28,7 @@ export async function sort(options = {}) {
 
   // Fetch unread inbox messages
   const limit = options.limit || 100;
-  const url = buildGraphUrl('/me/messages', {
+  const url = buildGraphUrl('/me/mailFolders/inbox/messages', {
     top: limit,
     filter: 'isRead eq false',
     orderby: 'receivedDateTime desc',
