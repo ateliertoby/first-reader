@@ -1,0 +1,9 @@
+#!/usr/bin/env node
+import { program } from 'commander';
+
+program
+  .name('email')
+  .description('Outlook.com email CLI')
+  .version('1.0.0');
+
+program.parse();

@@ -1,0 +1,16 @@
+{
+  "name": "outlook-cli",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "email": "./bin/email"
+  },
+  "scripts": {
+    "test": "node --test test/**/*.test.js"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^2",
+    "@microsoft/microsoft-graph-client": "^3",
+    "commander": "^12"
+  }
+}
