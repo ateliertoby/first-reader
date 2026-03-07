@@ -1,9 +1,83 @@
 #!/usr/bin/env node
+import 'dotenv/config';
 import { program } from 'commander';
+import { login } from '../src/auth.js';
+import { inbox } from '../src/commands/inbox.js';
+import { read } from '../src/commands/read.js';
+import { send } from '../src/commands/send.js';
+import { reply } from '../src/commands/reply.js';
+import { del } from '../src/commands/delete.js';
+import { move } from '../src/commands/move.js';
+import { markRead, markUnread } from '../src/commands/mark.js';
+import { folders } from '../src/commands/folders.js';
+import { search } from '../src/commands/search.js';
 
 program
   .name('email')
   .description('Outlook.com email CLI')
   .version('1.0.0');
+
+program
+  .command('login')
+  .description('Authenticate with Microsoft account')
+  .action(login);
+
+program
+  .command('inbox')
+  .description('List inbox messages')
+  .option('--unread', 'Show unread only')
+  .option('-n, --number <count>', 'Number of messages', '20')
+  .action(inbox);
+
+program
+  .command('read <index>')
+  .description('Read a message by its inbox number')
+  .action(read);
+
+program
+  .command('send')
+  .description('Send a new email')
+  .requiredOption('--to <address>', 'Recipient email')
+  .requiredOption('--subject <subject>', 'Email subject')
+  .option('--body <body>', 'Email body', '')
+  .action(send);
+
+program
+  .command('reply <index>')
+  .description('Reply to a message')
+  .requiredOption('--body <body>', 'Reply body')
+  .action(reply);
+
+program
+  .command('delete <index>')
+  .description('Delete a message (move to trash)')
+  .action(del);
+
+program
+  .command('move <index>')
+  .description('Move a message to a folder')
+  .requiredOption('--to <folder>', 'Destination folder name')
+  .action(move);
+
+program
+  .command('mark-read <index>')
+  .description('Mark a message as read')
+  .action(markRead);
+
+program
+  .command('mark-unread <index>')
+  .description('Mark a message as unread')
+  .action(markUnread);
+
+program
+  .command('folders')
+  .description('List mail folders')
+  .action(folders);
+
+program
+  .command('search <query>')
+  .description('Search emails')
+  .option('-n, --number <count>', 'Max results', '20')
+  .action(search);
 
 program.parse();
