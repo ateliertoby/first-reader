@@ -102,7 +102,7 @@ async function liveClassify(config, since) {
       received_at: msg.receivedDateTime,
       bucket: r.bucket,
       rule_id: r.ruleId || null,
-      action: r.bucket ? (r.guarded ? 'guard-blocked' : 'moved') : 'kept',
+      action: r.bucket ? (r.guarded ? 'guard-blocked' : (r.bucket === 'keep' ? 'kept-rule' : 'moved')) : 'kept',
       parsed: null
     };
   });
