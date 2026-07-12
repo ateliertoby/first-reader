@@ -14,5 +14,8 @@
     "better-sqlite3": "^12.11.1",
     "commander": "^12",
     "dotenv": "^17.3.1"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
   }
 }

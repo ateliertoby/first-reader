@@ -45,3 +45,80 @@ export class TransactionDB {
     this.db.close();
   }
 }
+
+export class SortLogDB {
+  constructor(dbPath) {
+    const dir = path.dirname(dbPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    this.db = new Database(dbPath);
+    this.db.pragma('journal_mode = WAL');
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sort_log (
+        id INTEGER PRIMARY KEY,
+        run_at TEXT NOT NULL,
+        email_id TEXT NOT NULL,
+        sender TEXT, domain TEXT, subject TEXT, subject_key TEXT,
+        received_at TEXT,
+        bucket TEXT, rule_id TEXT,
+        action TEXT NOT NULL,
+        parsed INTEGER,
+        UNIQUE(email_id, action)
+      )
+    `);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sortlog_rule ON sort_log(rule_id, subject_key)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_sortlog_domain ON sort_log(domain, run_at)`);
+
+    this._insert = this.db.prepare(`
+      INSERT OR IGNORE INTO sort_log (run_at, email_id, sender, domain, subject, subject_key, received_at, bucket, rule_id, action, parsed)
+      VALUES (@run_at, @email_id, @sender, @domain, @subject, @subject_key, @received_at, @bucket, @rule_id, @action, @parsed)
+    `);
+  }
+
+  insert(entry) {
+    const result = this._insert.run(entry);
+    return result.changes > 0;
+  }
+
+  movedSince(since, { ruleId, sender, domain } = {}) {
+    let sql = `SELECT * FROM sort_log WHERE action = 'moved' AND run_at >= ?`;
+    const params = [since];
+    if (ruleId) { sql += ' AND rule_id = ?'; params.push(ruleId); }
+    if (sender) { sql += ' AND sender = ?'; params.push(sender); }
+    if (domain) { sql += ' AND domain = ?'; params.push(domain); }
+    return this.db.prepare(sql).all(...params);
+  }
+
+  keptSince(since) {
+    return this.db.prepare(
+      `SELECT * FROM sort_log WHERE action = 'kept' AND run_at >= ?`
+    ).all(since);
+  }
+
+  domainHistory(domain) {
+    return this.db.prepare(
+      `SELECT COUNT(*) as count FROM sort_log WHERE domain = ? AND action = 'kept'`
+    ).get(domain).count;
+  }
+
+  isNovelSubject(ruleId, subjectKey, before) {
+    const row = this.db.prepare(
+      `SELECT 1 FROM sort_log WHERE rule_id = ? AND subject_key = ? AND run_at < ? LIMIT 1`
+    ).get(ruleId, subjectKey, before);
+    return !row;
+  }
+
+  listUnsortable({ sender, ruleId, emailId, since } = {}) {
+    let sql = `SELECT * FROM sort_log WHERE action = 'moved' AND email_id NOT IN (SELECT email_id FROM sort_log WHERE action = 'unsorted')`;
+    const params = [];
+    if (sender) { sql += ' AND sender = ?'; params.push(sender); }
+    if (ruleId) { sql += ' AND rule_id = ?'; params.push(ruleId); }
+    if (emailId) { sql += ' AND email_id = ?'; params.push(emailId); }
+    if (since) { sql += ' AND run_at >= ?'; params.push(since); }
+    return this.db.prepare(sql).all(...params);
+  }
+
+  close() {
+    this.db.close();
+  }
+}

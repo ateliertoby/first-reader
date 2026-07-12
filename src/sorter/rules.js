@@ -1,81 +1,121 @@
-const ACCOUNTING_RULES = [
-  { sender: 'mox.com', subject: /交易|消費|Mox Card|轉數|入錢|取消交易|里數/ },
-  { sender: 'antbank', subject: /PayLater 付款|轉賬成功|還款成功|部分還款|還款失敗|支付成功/ },
-  { sender: 'hsbc', subject: /支付通知|payment transfer|credit advice|Credit Card Transaction|信用卡付款提示|Receipt of an inward|已繳付信用卡/ },
-  { sender: 'paypal', subject: /收據|Receipt|付款|提交/ },
-  { sender: 'hketoll', subject: /交易通知|繳費通知/ },
-  { sender: 'dahsing', subject: /已執行繳費|Card-Not-Present/ },
-  { sender: 'mcdonalds', subject: /訂單確認/ },
-  { sender: 'sc.com', subject: /Receive Money|收款通知|Send Money/ },
-  { sender: 'payme', subject: /轉賬|增值|付款/ },
-  { sender: 'hangseng', subject: /成功轉賬/ },
-  { sender: 'bowtie', subject: /Payment Successful/i },
-  { sender: 'openrouter', subject: /receipt/i },
-  { sender: 'anthropic', subject: /receipt/i },
-  { sender: 'hushed', subject: /receipt/i },
-  { sender: 'globaltel', subject: /料金|引き落とし/ },
-  { sender: 'stripe.com', subject: /receipt/i },
-];
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const NOTIFICATION_RULES = [
-  { sender: 'microsoft' },
-  { sender: 'github' },
-  { sender: 'antbank', subject: /新登入通知|e-Statement|還款提醒/ },
-  { sender: 'dahsing', subject: /登入|MyAuto/ },
-  { sender: 'transitpay' },
-  { sender: 'homeisp' },
-  { sender: 'vercel' },
-  { sender: 'gridform' },
-  { sender: 'openai' },
-  { sender: '1010' },
-  { sender: 'hkcsl' },
-  { sender: 'sc.com', subject: /Payee|Instruction|transfer|防騙|安心/ },
-  { sender: 'mallpoints' },
-  { sender: 'mox.com', subject: /分期|設立|推薦共賞|騙局|條款修訂|新登入/ },
-  { sender: 'payme', subject: /已連結|已被移除|成功登入/ },
-  { sender: 'hsbc', subject: /外匯展望/ },
-  { sender: 'hangseng', subject: /數碼理財/ },
-  // Ads & pure notifications
-  { sender: 'facebook' },
-  { sender: 'coinport' },
-  { sender: 'brokerco' },
-  { sender: 'carco' },
-  { sender: 'spamsite' },
-  { sender: 'eyewear88' },
-  { sender: 'sportsclub' },
-  { sender: 'cloudflare' },
-  { sender: 'domainly' },
-  { sender: 'fooddash' },
-  { sender: 'travelbook' },
-  { sender: 'jobboard' },
-  { sender: 'megamall' },
-  { sender: 'skyfly' },
-  { sender: 'brave' },
-];
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_CONFIG = path.join(__dirname, '..', '..', 'config', 'rules.json');
+const VALID_BUCKETS = new Set(['accounting', 'notifications', 'keep']);
 
-export function classify(senderAddress, subject) {
+export function loadRules(configPath = DEFAULT_CONFIG) {
+  const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  if (!Array.isArray(raw.guards)) throw new Error('guards must be an array');
+  if (!Array.isArray(raw.rules)) throw new Error('rules must be an array');
+
+  const ids = new Set();
+  const compiled = [];
+
+  for (const rule of raw.rules) {
+    if (!rule.id) throw new Error('rule missing id');
+    if (ids.has(rule.id)) throw new Error(`duplicate rule id: ${rule.id}`);
+    ids.add(rule.id);
+
+    if (!VALID_BUCKETS.has(rule.bucket)) {
+      throw new Error(`unknown bucket "${rule.bucket}" in rule ${rule.id}`);
+    }
+    if (!Array.isArray(rule.domains) || rule.domains.length === 0) {
+      throw new Error(`rule ${rule.id} must have at least one domain`);
+    }
+    for (const d of rule.domains) {
+      if (d.includes('@')) throw new Error(`domain "${d}" in rule ${rule.id} must not contain @`);
+      if (!d.includes('.')) throw new Error(`domain "${d}" in rule ${rule.id} must contain a dot`);
+      if (d !== d.toLowerCase()) throw new Error(`domain "${d}" in rule ${rule.id} must be lowercase`);
+    }
+
+    let subjectRe = null;
+    if (rule.subject) {
+      try {
+        subjectRe = new RegExp(rule.subject, 'i');
+      } catch (e) {
+        throw new Error(`bad regex in rule ${rule.id}: ${e.message}`);
+      }
+    }
+
+    compiled.push({
+      id: rule.id,
+      bucket: rule.bucket,
+      domains: rule.domains.slice().sort((a, b) => b.length - a.length),
+      subjectRe,
+      probationUntil: rule.probationUntil || null,
+      note: rule.note || null,
+      added: rule.added || null
+    });
+  }
+
+  const guards = raw.guards.map(g => g.toLowerCase());
+  return { guards, rules: compiled, raw };
+}
+
+function domainMatches(emailDomain, ruleDomain) {
+  return emailDomain === ruleDomain || emailDomain.endsWith('.' + ruleDomain);
+}
+
+export function classify(senderAddress, subject, config) {
+  const { guards, rules } = config;
   const addr = senderAddress.toLowerCase();
+  const atIdx = addr.lastIndexOf('@');
+  if (atIdx < 0) return { bucket: null };
+  const domain = addr.slice(atIdx + 1);
   const subj = subject || '';
 
-  for (const rule of ACCOUNTING_RULES) {
-    if (addr.includes(rule.sender)) {
-      if (rule.subject) {
-        if (rule.subject.test(subj)) return 'accounting';
-      } else {
-        return 'accounting';
+  const BUCKET_ORDER = { accounting: 0, notifications: 1, keep: 2 };
+  let bestMatch = null;
+  let bestDomainLen = -1;
+  let bestBucketPri = 999;
+
+  for (const rule of rules) {
+    let matchedDomainLen = 0;
+    let matched = false;
+    for (const d of rule.domains) {
+      if (domainMatches(domain, d)) {
+        matched = true;
+        matchedDomainLen = d.length;
+        break;
+      }
+    }
+    if (!matched) continue;
+
+    if (rule.subjectRe && !rule.subjectRe.test(subj)) continue;
+
+    const pri = BUCKET_ORDER[rule.bucket];
+    if (pri < bestBucketPri || (pri === bestBucketPri && matchedDomainLen > bestDomainLen)) {
+      bestMatch = rule;
+      bestDomainLen = matchedDomainLen;
+      bestBucketPri = pri;
+    }
+  }
+
+  if (!bestMatch) return { bucket: null };
+
+  let guarded = false;
+  if (bestMatch.bucket !== 'keep') {
+    const subjLower = subj.toLowerCase();
+    for (const g of guards) {
+      if (subjLower.includes(g)) {
+        guarded = true;
+        break;
       }
     }
   }
 
-  for (const rule of NOTIFICATION_RULES) {
-    if (addr.includes(rule.sender)) {
-      if (rule.subject) {
-        if (rule.subject.test(subj)) return 'notifications';
-      } else {
-        return 'notifications';
-      }
-    }
-  }
+  return { bucket: bestMatch.bucket, ruleId: bestMatch.id, guarded };
+}
 
-  return null;
+export function subjectKey(subject) {
+  if (!subject) return '';
+  return subject
+    .toLowerCase()
+    .replace(/\d+/g, '#')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
 }

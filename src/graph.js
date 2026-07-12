@@ -12,7 +12,7 @@ export function buildGraphUrl(path, params = {}) {
 
 async function graphFetch(path, options = {}) {
   const token = await getAuthenticatedClient();
-  const url = `${GRAPH_BASE}${path}`;
+  const url = path.startsWith('https://') ? path : `${GRAPH_BASE}${path}`;
   const response = await fetch(url, {
     ...options,
     headers: {

@@ -13,6 +13,10 @@ import { folders } from '../src/commands/folders.js';
 import { search } from '../src/commands/search.js';
 import { sortCommand } from '../src/commands/sort.js';
 import { transactions } from '../src/commands/transactions.js';
+import { ruleList, ruleAdd, ruleRm, ruleGuardAdd, ruleGuardRm } from '../src/commands/rule.js';
+import { unsortCommand } from '../src/commands/unsort.js';
+import { reportCommand } from '../src/commands/report.js';
+import { rescueScanCommand } from '../src/commands/rescue-scan.js';
 
 program
   .name('email')
@@ -84,11 +88,10 @@ program
 
 program
   .command('sort')
-  .description('Auto-sort inbox emails into folders')
+  .description('Auto-sort inbox emails into folders (watermark-based)')
   .option('--dry-run', 'Classify without moving emails')
-  .option('--all', 'Include read emails (default: unread only)')
   .option('--since <date>', 'Only emails after this date (YYYY-MM-DD)')
-  .option('--limit <count>', 'Max emails to process', '100')
+  .option('--limit <count>', 'Max emails to process')
   .action(sortCommand);
 
 program
@@ -96,5 +99,66 @@ program
   .description('List recorded transactions')
   .option('-n, --number <count>', 'Number of transactions', '20')
   .action(transactions);
+
+// rule command with subcommands
+const rule = program.command('rule').description('Manage sort rules');
+
+rule
+  .command('list')
+  .description('List all rules and guards')
+  .option('--bucket <bucket>', 'Filter by bucket (accounting/notifications/keep)')
+  .action(ruleList);
+
+rule
+  .command('add')
+  .description('Add a new sort rule')
+  .requiredOption('--bucket <bucket>', 'Target bucket (accounting/notifications/keep)')
+  .requiredOption('--domain <domains...>', 'One or more domains')
+  .option('--subject <regex>', 'Subject regex pattern')
+  .option('--note <text>', 'Note for this rule')
+  .action(ruleAdd);
+
+rule
+  .command('rm <id>')
+  .description('Remove a rule by ID')
+  .action(ruleRm);
+
+const guard = rule.command('guard').description('Manage guard words');
+
+guard
+  .command('add <word>')
+  .description('Add a guard word')
+  .action(ruleGuardAdd);
+
+guard
+  .command('rm <word>')
+  .description('Remove a guard word')
+  .action(ruleGuardRm);
+
+program
+  .command('unsort')
+  .description('Move sorted emails back to inbox')
+  .option('--sender <address>', 'Filter by sender')
+  .option('--rule <id>', 'Filter by rule ID')
+  .option('--email-id <id>', 'Filter by specific email ID')
+  .option('--since <date>', 'Only emails sorted after this date (ISO)')
+  .option('--dry-run', 'Show what would be unsorted without moving')
+  .action(unsortCommand);
+
+program
+  .command('report')
+  .description('Sort activity report')
+  .option('--hours <n>', 'Report window in hours', '24')
+  .option('--since <date>', 'Report since date (ISO)')
+  .option('--live', 'Simulate classification on current inbox')
+  .option('--json', 'Output machine-readable JSON')
+  .action(reportCommand);
+
+program
+  .command('rescue-scan')
+  .description('Scan sorted folders for guard-matching emails')
+  .option('--since <date>', 'Only emails after this date (YYYY-MM-DD)')
+  .option('--folder <name>', 'Scan specific folder (Accounting or Notifications)')
+  .action(rescueScanCommand);
 
 program.parse();
