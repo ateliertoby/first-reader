@@ -105,6 +105,126 @@ describe('classify', () => {
   test('MallPoints → notifications', () => {
     assert.strictEqual(classify('some@mallpoints.example', 'MallPoints積分到期提示'), 'notifications');
   });
+  // New accounting rules
+  test('HSBC 信用卡付款提示 → accounting', () => {
+    assert.strictEqual(classify('hsbc@informationservices.hsbc.com.hk', '您的信用卡付款提示 Ref:[X0000000001]'), 'accounting');
+  });
+  test('HSBC Receipt of inward payment → accounting', () => {
+    assert.strictEqual(classify('HSBC@notification.hsbc.com.hk', 'Receipt of an inward payment to your credit card account'), 'accounting');
+  });
+  test('HSBC 已繳付信用卡 → accounting', () => {
+    assert.strictEqual(classify('HSBC@notification.hsbc.com.hk', '您已繳付信用卡款項 Ref:[Z2S00000001]'), 'accounting');
+  });
+  test('Dah Sing Card-Not-Present → accounting', () => {
+    assert.strictEqual(classify('ebanking@dahsing.com', 'Dah Sing Bank: Card-Not-Present Successful Transaction Alert'), 'accounting');
+  });
+  test('Ant Bank 支付成功 → accounting', () => {
+    assert.strictEqual(classify('hk_antbank_service@notify.antbank.hk', '支付成功'), 'accounting');
+  });
+  test('SC Pay Send Money → accounting', () => {
+    assert.strictEqual(classify('OnlineBanking.HK@sc.com', 'Send Money via Standard Chartered Pay – Receipt No. 2602-000000000001'), 'accounting');
+  });
+  test('PayPal 提交 → accounting', () => {
+    assert.strictEqual(classify('service@paypal.com.hk', '你已提交向 GLOBALTEL COMMUNICATION... 提交金額為 $12.00 USD 的訂單'), 'accounting');
+  });
+  test('Bowtie Payment Successful → accounting', () => {
+    assert.strictEqual(classify('info@notifications.bowtie.com.hk', '[ Payment Successful ] Premium well received'), 'accounting');
+  });
+  test('Nimbus AI receipt → accounting', () => {
+    assert.strictEqual(classify('receipts@nimbus-ai.example', 'Your Nimbus AI, Inc receipt [#1111-2222]'), 'accounting');
+  });
+  test('Anthropic receipt → accounting', () => {
+    assert.strictEqual(classify('invoice+statements@modelworks.example', 'Your receipt from Modelworks, PBC #1111-2222-3333'), 'accounting');
+  });
+  test('Vaultline receipt → accounting', () => {
+    assert.strictEqual(classify('receipts@vaultline.example', 'Your Vaultline c/o Meridian Apps Inc. receipt [#5555-6666]'), 'accounting');
+  });
+  test('GlobalTel 料金 → accounting', () => {
+    assert.strictEqual(classify('billing@globaltel-hk.example', '【GlobalTel】ご利用料金のお引き落としが完了いたしました'), 'accounting');
+  });
+  test('Stripe/Gridform receipt → accounting', () => {
+    assert.strictEqual(classify('receipts+acct_1ABCDEFGHIJKLMNO@stripe.com', 'Your Gridform receipt [#3333-4444]'), 'accounting');
+  });
+
+  // New notification rules
+  test('Mox 推薦共賞 → notifications', () => {
+    assert.strictEqual(classify('info@mailer.mox.com', '有關Mox推薦共賞計劃修訂通知'), 'notifications');
+  });
+  test('Mox 騙局 → notifications', () => {
+    assert.strictEqual(classify('info@mailer.mox.com', '最新騙局大流行，即睇免中招'), 'notifications');
+  });
+  test('Mox 新登入 → notifications', () => {
+    assert.strictEqual(classify('notify@mox.com', '新登入位置'), 'notifications');
+  });
+  test('Mox 月結單 → stays in inbox (null)', () => {
+    assert.strictEqual(classify('notify@mox.com', '已發出本月份Mox戶口月結單'), null);
+  });
+  test('Mox 賬單到期 → stays in inbox (null)', () => {
+    assert.strictEqual(classify('notify@mox.com', '你的Mox Credit 賬單將於 2026年2月11日到期'), null);
+  });
+  test('PayMe 成功登入 → notifications', () => {
+    assert.strictEqual(classify('no-reply@secure-app.payme.hsbc.com.hk', '成功登入PayMe'), 'notifications');
+  });
+  test('PayMe 信用卡已連結 → notifications', () => {
+    assert.strictEqual(classify('no-reply@secure-app.payme.hsbc.com.hk', '您的信用卡已連結至 PayMe！'), 'notifications');
+  });
+  test('HSBC 外匯展望 → notifications', () => {
+    assert.strictEqual(classify('hsbc.notifications@messaging.hsbc.com.hk', '外匯展望 - 2026年2月'), 'notifications');
+  });
+  test('Dah Sing MyAuto → notifications', () => {
+    assert.strictEqual(classify('ebanking@dahsing.com', '【大新 MyAuto 車主信用卡】最新駕駛資訊'), 'notifications');
+  });
+  test('Dah Sing e-Statement → stays in inbox (null)', () => {
+    assert.strictEqual(classify('ebanking@dahsing.com', 'Credit Card e-Statement (Feb, 2026)'), null);
+  });
+  test('Dah Sing Payment Due → stays in inbox (null)', () => {
+    assert.strictEqual(classify('ebanking@dahsing.com', 'Dah Sing Credit Card Payment Due Date Reminder'), null);
+  });
+  test('Hang Seng 數碼理財 → notifications', () => {
+    assert.strictEqual(classify('notification@messages.hangseng.com', '數碼理財恒簡單 | 4大轉賬常見疑難'), 'notifications');
+  });
+  test('Hang Seng e-Statement → stays in inbox (null)', () => {
+    assert.strictEqual(classify('e-alert@mail.hangseng.com', '你的最新e-Statement / e-Advice已準備好'), null);
+  });
+  test('SC 防騙 → notifications', () => {
+    assert.strictEqual(classify('communications@hk.sc.com', '安心迎新年，防騙要留神'), 'notifications');
+  });
+  test('Facebook → notifications', () => {
+    assert.strictEqual(classify('security@facebookmail.com', '123456 is your Facebook security code'), 'notifications');
+  });
+  test('CoinPort → notifications', () => {
+    assert.strictEqual(classify('donotreply@notification.coinport.example', 'Get limited time HKD reward'), 'notifications');
+  });
+  test('致富CHIEF → notifications', () => {
+    assert.strictEqual(classify('cs@brokerco.example.hk', '美國股票期權第三方收費調整通知'), 'notifications');
+  });
+  test('CarCo → notifications', () => {
+    assert.strictEqual(classify('CarCoHK@carco.example', 'CarCo 尚餘最後一批配額'), 'notifications');
+  });
+  test('SPAMSITE → notifications', () => {
+    assert.strictEqual(classify('promo@spamsite.example', '【SPAMSITE】Limited to Mar 3th!'), 'notifications');
+  });
+  test('EYEWEAR 88 → notifications', () => {
+    assert.strictEqual(classify('ecommerce@eyewear.example.hk', '您的眼鏡88積分已更新'), 'notifications');
+  });
+  test('SPORTSCLUB → notifications', () => {
+    assert.strictEqual(classify('customer.care@sportsclub.example.hk', '【香港賽馬會服務】修訂通知'), 'notifications');
+  });
+  test('Cloudflare → notifications', () => {
+    assert.strictEqual(classify('noreply@notify.cloudflare.com', 'my-site.example is now active'), 'notifications');
+  });
+  test('fooddash → notifications', () => {
+    assert.strictEqual(classify('rider@fooddash.example.hk', 'Lunar New Year Reactivation'), 'notifications');
+  });
+  test('SkyFly → notifications', () => {
+    assert.strictEqual(classify('noreply@e.skyfly.example', '你的26年2月賬戶概要'), 'notifications');
+  });
+
+  // Ivan Li newsletter → stays in inbox
+  test('Ivan Li newsletter → stays in inbox (null)', () => {
+    assert.strictEqual(classify('bingo@creatorly.example', '本週專欄更新'), null);
+  });
+
   test('unknown sender → null', () => {
     assert.strictEqual(classify('random@example.com', 'Hello there'), null);
   });

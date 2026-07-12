@@ -29,6 +29,18 @@ function parseAntBank(body, dateStr) {
       type: 'payment'
     };
   }
+  // 支付成功: "debited HKD38.00" / "扣取HKD38.00"
+  const debitMatch = body.match(/(?:debited|扣取)\s*(HKD|USD)([\d,.]+)/i);
+  if (debitMatch) {
+    return {
+      date: extractDate(dateStr),
+      merchant: null,
+      amount: parseFloat(debitMatch[2].replace(/,/g, '')),
+      currency: debitMatch[1].toUpperCase(),
+      source: 'Ant Bank',
+      type: 'payment'
+    };
+  }
   const transferMatch = body.match(/HK\$([\d,.]+)/);
   if (transferMatch) {
     return {
@@ -81,6 +93,18 @@ function parsePayPal(body, dateStr) {
       type: 'payment'
     };
   }
+  // 訂購 format: "你已向 MERCHANT 訂購 $12.00 USD"
+  const orderMatch = body.match(/你已向\s+(.+?)\s+(?:\(.*?\)\s+)?訂購\s+\$([\d,.]+)\s+(USD|HKD)/);
+  if (orderMatch) {
+    return {
+      date: extractDate(dateStr),
+      merchant: orderMatch[1].trim(),
+      amount: parseFloat(orderMatch[2].replace(/,/g, '')),
+      currency: orderMatch[3],
+      source: 'PayPal',
+      type: 'payment'
+    };
+  }
   return null;
 }
 
@@ -119,6 +143,19 @@ function parseDahSing(body, dateStr) {
       merchant: merchantMatch ? merchantMatch[1].trim() : null,
       amount: parseFloat(amountMatch[1].replace(/,/g, '')),
       currency: 'HKD',
+      source: 'Dah Sing',
+      type: 'payment'
+    };
+  }
+  // Card-Not-Present transaction
+  const cnpAmount = body.match(/Transaction Amount:(HKD|USD)\s*([\d,.]+)/i) || body.match(/交易金額：(HKD|USD)\s*([\d,.]+)/);
+  const cnpMerchant = body.match(/Merchant:\s*(.+?)(?:Transaction)/i) || body.match(/商戶：(.+?)(?:交易)/);
+  if (cnpAmount) {
+    return {
+      date: extractDate(dateStr),
+      merchant: cnpMerchant ? cnpMerchant[1].trim() : null,
+      amount: parseFloat(cnpAmount[2].replace(/,/g, '')),
+      currency: cnpAmount[1].toUpperCase(),
       source: 'Dah Sing',
       type: 'payment'
     };
@@ -186,6 +223,37 @@ function parseHangSeng(body, dateStr) {
   return null;
 }
 
+function parseStripeReceipt(body, dateStr) {
+  const amountMatch = body.match(/Amount paid \$([\d,.]+)/);
+  const merchantMatch = body.match(/Receipt from (.+?)\s*[\[#]/);
+  if (amountMatch) {
+    return {
+      date: extractDate(dateStr),
+      merchant: merchantMatch ? merchantMatch[1].trim() : null,
+      amount: parseFloat(amountMatch[1].replace(/,/g, '')),
+      currency: 'USD',
+      source: merchantMatch ? merchantMatch[1].trim() : 'Stripe',
+      type: 'payment'
+    };
+  }
+  return null;
+}
+
+function parseBowtie(body, dateStr) {
+  const amountMatch = body.match(/(?:HKD|HK\$)\s*([\d,.]+)/i) || body.match(/premium.*?\$([\d,.]+)/i);
+  if (amountMatch) {
+    return {
+      date: extractDate(dateStr),
+      merchant: 'Bowtie',
+      amount: parseFloat(amountMatch[1].replace(/,/g, '')),
+      currency: 'HKD',
+      source: 'Bowtie',
+      type: 'insurance'
+    };
+  }
+  return null;
+}
+
 const PARSERS = [
   { sender: 'mox.com', parse: parseMox },
   { sender: 'antbank', parse: parseAntBank },
@@ -197,6 +265,11 @@ const PARSERS = [
   { sender: 'sc.com', parse: parseSCPay },
   { sender: 'payme', parse: parsePayMe },
   { sender: 'hangseng', parse: parseHangSeng },
+  { sender: 'bowtie', parse: parseBowtie },
+  { sender: 'openrouter', parse: parseStripeReceipt },
+  { sender: 'anthropic', parse: parseStripeReceipt },
+  { sender: 'hushed', parse: parseStripeReceipt },
+  { sender: 'stripe.com', parse: parseStripeReceipt },
 ];
 
 export function parseTransaction(senderAddress, subject, body, dateStr) {

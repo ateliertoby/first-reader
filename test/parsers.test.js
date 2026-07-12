@@ -114,6 +114,85 @@ describe('parseTransaction', () => {
     assert.strictEqual(result.source, "McDonald's");
   });
 
+  test('Dah Sing Card-Not-Present', () => {
+    const body = 'Merchant: POWER GYMTransaction Amount:HKD 520.00Card No. ending with: 1234Transaction Date: 01 Mar 2026';
+    const result = parseTransaction(
+      'ebanking@dahsing.com',
+      'Dah Sing Bank: Card-Not-Present Successful Transaction Alert',
+      body,
+      '2026-03-01T14:36:00Z'
+    );
+    assert.strictEqual(result.amount, 520.00);
+    assert.strictEqual(result.currency, 'HKD');
+    assert.strictEqual(result.merchant, 'POWER GYM');
+    assert.strictEqual(result.source, 'Dah Sing');
+  });
+
+  test('Ant Bank 支付成功', () => {
+    const body = 'Payment Successful Dear Valued Customer, We have debited HKD38.00 on 24/02 09:53 from your Libra Savings account';
+    const result = parseTransaction(
+      'hk_antbank_service@notify.antbank.hk',
+      '支付成功',
+      body,
+      '2026-02-24T09:53:00Z'
+    );
+    assert.strictEqual(result.amount, 38.00);
+    assert.strictEqual(result.currency, 'HKD');
+    assert.strictEqual(result.source, 'Ant Bank');
+    assert.strictEqual(result.type, 'payment');
+  });
+
+  test('PayPal 訂購', () => {
+    const body = '你已向 GLOBALTEL COMMUNICATION... (info@globaltel-hk.example) 訂購 $12.00 USD';
+    const result = parseTransaction(
+      'service@paypal.com.hk',
+      '你已提交向 GLOBALTEL 提交金額為 $12.00 USD 的訂單',
+      body,
+      '2026-02-23T18:43:10Z'
+    );
+    assert.strictEqual(result.amount, 12.00);
+    assert.strictEqual(result.currency, 'USD');
+    assert.strictEqual(result.merchant, 'GLOBALTEL COMMUNICATION...');
+    assert.strictEqual(result.source, 'PayPal');
+  });
+
+  test('Stripe/Nimbus AI receipt', () => {
+    const body = 'Receipt from Nimbus AI, Inc [#1111-2222] Amount paid $10.80 Date paid Mar 1, 2026';
+    const result = parseTransaction(
+      'receipts@nimbus-ai.example',
+      'Your Nimbus AI, Inc receipt [#1111-2222]',
+      body,
+      '2026-03-01T02:03:44Z'
+    );
+    assert.strictEqual(result.amount, 10.80);
+    assert.strictEqual(result.currency, 'USD');
+    assert.strictEqual(result.merchant, 'Nimbus AI, Inc');
+  });
+
+  test('Stripe/Gridform receipt', () => {
+    const body = 'Receipt from Gridform [#3333-4444] Amount paid $10.00 Date paid Feb 13, 2026';
+    const result = parseTransaction(
+      'receipts+acct_1ABCDEFGHIJKLMNO@stripe.com',
+      'Your Gridform receipt [#3333-4444]',
+      body,
+      '2026-02-13T05:04:13Z'
+    );
+    assert.strictEqual(result.amount, 10.00);
+    assert.strictEqual(result.merchant, 'Gridform');
+  });
+
+  test('Stripe/Vaultline receipt', () => {
+    const body = 'Receipt from Vaultline c/o Meridian Apps Inc. [#5555-6666] Amount paid $5.99 Date paid Feb 13, 2026';
+    const result = parseTransaction(
+      'receipts@vaultline.example',
+      'Your Vaultline receipt',
+      body,
+      '2026-02-13T04:55:07Z'
+    );
+    assert.strictEqual(result.amount, 5.99);
+    assert.strictEqual(result.merchant, 'Vaultline c/o Meridian Apps Inc.');
+  });
+
   test('returns null for unparseable body', () => {
     const result = parseTransaction(
       'unknown@example.com',

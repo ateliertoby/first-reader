@@ -86,6 +86,8 @@ program
   .command('sort')
   .description('Auto-sort inbox emails into folders')
   .option('--dry-run', 'Classify without moving emails')
+  .option('--all', 'Include read emails (default: unread only)')
+  .option('--since <date>', 'Only emails after this date (YYYY-MM-DD)')
   .option('--limit <count>', 'Max emails to process', '100')
   .action(sortCommand);
 
