@@ -66,8 +66,16 @@ export function loadRules(configPath = DEFAULT_CONFIG) {
     });
   }
 
+  // Parse optional settings
+  const rawSettings = raw.settings || {};
+  const minAgeHours = rawSettings.minAgeHours !== undefined ? rawSettings.minAgeHours : 6;
+  if (typeof minAgeHours !== 'number' || !isFinite(minAgeHours) || minAgeHours < 0) {
+    throw new Error(`settings.minAgeHours must be a non-negative finite number, got: ${minAgeHours}`);
+  }
+  const settings = { minAgeHours };
+
   const guards = raw.guards.map(g => g.toLowerCase());
-  return { guards, rules: compiled, raw };
+  return { guards, rules: compiled, settings, raw };
 }
 
 function domainMatches(emailDomain, ruleDomain) {

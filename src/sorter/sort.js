@@ -10,15 +10,22 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, '..', '..', 'data', 'transactions.db');
 const STATE_PATH = path.join(__dirname, '..', '..', 'data', 'sort-state.json');
 
-export function computeWindow({ state, since, now }) {
+export function computeWindow({ state, since, now, minAgeHours }) {
+  const ageMs = (minAgeHours || 0) * 3600_000;
+  const end = new Date(new Date(now).getTime() - ageMs).toISOString();
+
   if (since) {
     const start = since.includes('T') ? since : `${since}T00:00:00Z`;
-    return { start };
+    return { start, end };
   }
-  if (state && state.lastRun) {
-    const d = new Date(state.lastRun);
-    d.setHours(d.getHours() - 1);
-    return { start: d.toISOString() };
+  if (state && state.processedThrough) {
+    const d = new Date(state.processedThrough);
+    d.setHours(d.getHours() - 1); // 1h overlap
+    const start = d.toISOString();
+    if (new Date(end) <= new Date(start)) {
+      return { tooSoon: true };
+    }
+    return { start, end };
   }
   return { initialize: true };
 }
@@ -42,12 +49,12 @@ async function ensureFolder(name) {
   return created.id;
 }
 
-async function fetchAllMessages(startFilter, limit) {
+async function fetchAllMessages(startFilter, endFilter, limit) {
   const params = {
     top: 100,
     orderby: 'receivedDateTime desc',
     select: 'id,subject,from,receivedDateTime,isRead',
-    filter: `receivedDateTime ge ${startFilter}`
+    filter: `receivedDateTime ge ${startFilter} and receivedDateTime le ${endFilter}`
   };
   const url = buildGraphUrl('/me/mailFolders/inbox/messages', params);
   let result = await graphGet(url);
@@ -68,25 +75,32 @@ export async function sort(options = {}) {
   const dryRun = options.dryRun || false;
   const now = new Date().toISOString();
 
+  const config = loadRules();
+  const minAgeHours = options.minAge !== undefined ? options.minAge : config.settings.minAgeHours;
+
   const state = loadState();
-  const window = computeWindow({ state, since: options.since, now });
+  const window = computeWindow({ state, since: options.since, now, minAgeHours });
 
   if (window.initialize) {
-    if (!dryRun) saveState({ lastRun: now });
+    const initEnd = new Date(new Date(now).getTime() - minAgeHours * 3600_000).toISOString();
+    if (!dryRun) saveState({ processedThrough: initEnd });
     console.log('First run: watermark initialized. No messages processed.');
     return { moved: 0, kept: 0, guardBlocked: 0 };
   }
 
-  const config = loadRules();
+  if (window.tooSoon) {
+    console.log('Too soon: not enough time elapsed since last run. No messages processed.');
+    return { moved: 0, kept: 0, guardBlocked: 0 };
+  }
   const [accountingFolderId, notificationsFolderId] = await Promise.all([
     ensureFolder('Accounting'),
     ensureFolder('Notifications')
   ]);
 
-  const messages = await fetchAllMessages(window.start, options.limit || null);
+  const messages = await fetchAllMessages(window.start, window.end, options.limit || null);
   if (messages.length === 0) {
     console.log('No messages to sort.');
-    if (!dryRun) saveState({ lastRun: now });
+    if (!dryRun) saveState({ processedThrough: window.end });
     return { moved: 0, kept: 0, guardBlocked: 0 };
   }
 
@@ -182,6 +196,6 @@ export async function sort(options = {}) {
   for (const line of noparseLines) console.log(line);
   if (noparseLines.length > 0) console.log(`${noparseLines.length} accounting emails with no parse result.`);
 
-  if (!dryRun) saveState({ lastRun: now });
+  if (!dryRun) saveState({ processedThrough: window.end });
   return counts;
 }

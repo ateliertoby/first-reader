@@ -92,6 +92,7 @@ program
   .option('--dry-run', 'Classify without moving emails')
   .option('--since <date>', 'Only emails after this date (YYYY-MM-DD)')
   .option('--limit <count>', 'Max emails to process')
+  .option('--min-age <hours>', 'Minimum email age in hours before sorting (overrides config)')
   .action(sortCommand);
 
 program
