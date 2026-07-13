@@ -6,7 +6,7 @@ import { loadRules } from '../sorter/rules.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(__dirname, '..', '..', 'config', 'rules.json');
 
-export function addRule(config, { bucket, domains, subject, note }) {
+export function addRule(config, { bucket, domains, subject, subjectExclude, ignoreGuards, note }) {
   const base = domains[0].replace(/\./g, '-');
   let id = base;
   const existing = new Set(config.rules.map(r => r.id));
@@ -22,6 +22,8 @@ export function addRule(config, { bucket, domains, subject, note }) {
 
   const entry = { id, bucket, domains };
   if (subject) entry.subject = subject;
+  if (subjectExclude) entry.subjectExclude = subjectExclude;
+  if (ignoreGuards) entry.ignoreGuards = true;
   if (note) entry.note = note;
   entry.added = now.toISOString().slice(0, 10);
   entry.probationUntil = probation.toISOString().slice(0, 10);
@@ -89,6 +91,12 @@ export async function ruleAdd(options) {
     catch (e) { throw new Error(`bad regex: ${e.message}`); }
   }
 
+  // Validate subjectExclude regex compiles
+  if (options.subjectExclude) {
+    try { new RegExp(options.subjectExclude, 'i'); }
+    catch (e) { throw new Error(`bad subject-exclude regex: ${e.message}`); }
+  }
+
   // Validate domains
   for (const d of domains) {
     if (d.includes('@')) throw new Error(`domain "${d}" must not contain @`);
@@ -107,6 +115,8 @@ export async function ruleAdd(options) {
     bucket: options.bucket,
     domains,
     subject: options.subject || null,
+    subjectExclude: options.subjectExclude || null,
+    ignoreGuards: options.ignoreGuards || false,
     note: options.note || null
   });
   writeConfig(newConfig);

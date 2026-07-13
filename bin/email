@@ -115,6 +115,8 @@ rule
   .requiredOption('--bucket <bucket>', 'Target bucket (accounting/notifications/keep)')
   .requiredOption('--domain <domains...>', 'One or more domains')
   .option('--subject <regex>', 'Subject regex pattern')
+  .option('--subject-exclude <regex>', 'Subject regex pattern to exclude from match')
+  .option('--ignore-guards', 'Bypass guard word blocking for this rule')
   .option('--note <text>', 'Note for this rule')
   .action(ruleAdd);
 

@@ -77,6 +77,41 @@ describe('loadRules', () => {
     assert.throws(() => loadRules(tmp), /must be lowercase/);
     fs.unlinkSync(tmp);
   });
+
+  test('throws on non-boolean ignoreGuards', () => {
+    const tmp = path.join(os.tmpdir(), 'bad-ignoreguards.json');
+    fs.writeFileSync(tmp, JSON.stringify({
+      version: 1, guards: [],
+      rules: [{ id: 'x', bucket: 'accounting', domains: ['x.com'], ignoreGuards: 'yes' }]
+    }));
+    assert.throws(() => loadRules(tmp), /ignoreGuards must be boolean in rule x/);
+    fs.unlinkSync(tmp);
+  });
+
+  test('throws on bad subjectExclude regex with rule id in message', () => {
+    const tmp = path.join(os.tmpdir(), 'bad-exclude.json');
+    fs.writeFileSync(tmp, JSON.stringify({
+      version: 1, guards: [],
+      rules: [{ id: 'myrul', bucket: 'accounting', domains: ['x.com'], subjectExclude: '((' }]
+    }));
+    assert.throws(() => loadRules(tmp), /bad subjectExclude regex in rule myrul/);
+    fs.unlinkSync(tmp);
+  });
+
+  test('valid ignoreGuards and subjectExclude load without error', () => {
+    const tmp = path.join(os.tmpdir(), 'valid-new-fields.json');
+    fs.writeFileSync(tmp, JSON.stringify({
+      version: 1, guards: ['failed'],
+      rules: [{
+        id: 'x', bucket: 'accounting', domains: ['x.com'],
+        subject: 'tx', subjectExclude: 'refund', ignoreGuards: true
+      }]
+    }));
+    const config = loadRules(tmp);
+    assert.strictEqual(config.rules[0].ignoreGuards, true);
+    assert.ok(config.rules[0].subjectExcludeRe);
+    fs.unlinkSync(tmp);
+  });
 });
 
 describe('classify', () => {
@@ -153,12 +188,12 @@ describe('classify', () => {
     assert.strictEqual(r.guarded, true);
   });
 
-  // Correction: antbank 還款失敗 no longer matches accounting
-  test('antbank 還款失敗 does NOT match accounting (removed from rules)', () => {
-    const r = classify('hk_antbank_service@notify.antbank.hk', '還款失敗', config);
-    // 還款失敗 doesn't match antbank-tx (PayLater 付款|轉賬成功|還款成功|部分還款|支付成功)
-    // doesn't match antbank-notif (新登入通知|e-Statement|還款提醒)
-    assert.strictEqual(r.bucket, null);
+  // Correction: antbank 還款失敗 唔係交易記錄 — Toby 2026-07-13 裁定入 notifications（push 已見）
+  test('antbank 還款失敗 → notifications via ignoreGuards, never accounting', () => {
+    const r = classify('hk_antbank_service@notify.antbank.hk', 'PayLater 還款失敗（PayLater Autopay Failed）', config);
+    assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.ruleId, 'antbank-hk');
+    assert.strictEqual(r.guarded, false);
   });
 
   // Legacy parity spot checks
@@ -531,6 +566,95 @@ describe('classify', () => {
   test('sender address is case-insensitive', () => {
     const r = classify('NOREPLY@GITHUB.COM', 'test', config);
     assert.strictEqual(r.bucket, 'notifications');
+  });
+
+  // subjectExclude tests
+  test('subjectExclude blocks match: "Mox Card 交易被拒絕" does NOT match mox-tx', () => {
+    const r = classify('notify@mox.com', 'Mox Card 交易被拒絕', config);
+    // mox-tx has subjectExclude: 交易被拒絕, so it skips mox-tx
+    // No other rule for mox.com matches this subject
+    assert.notStrictEqual(r.ruleId, 'mox-tx');
+  });
+
+  test('subjectExclude does not affect non-matching subjects', () => {
+    const r = classify('notify@mox.com', '取消交易通知', config);
+    assert.strictEqual(r.bucket, 'accounting');
+    assert.strictEqual(r.ruleId, 'mox-tx');
+  });
+});
+
+describe('classify with fixture configs', () => {
+  test('subjectExclude causes fallthrough to next matching rule', () => {
+    const tmp = path.join(os.tmpdir(), 'exclude-fixture.json');
+    fs.writeFileSync(tmp, JSON.stringify({
+      version: 1, guards: ['拒絕'],
+      rules: [
+        { id: 'mox-tx', bucket: 'accounting', domains: ['mox.com'], subject: '交易|Mox Card', subjectExclude: '交易被拒絕' },
+        { id: 'mox-notif', bucket: 'notifications', domains: ['mox.com'], subject: '分期|設立|新登入' },
+        { id: 'mox-all', bucket: 'notifications', domains: ['mox.com'] }
+      ]
+    }));
+    const cfg = loadRules(tmp);
+
+    // "Mox Card 交易被拒絕" — excluded from mox-tx, falls through to mox-all (domain catch-all)
+    const r = classify('notify@mox.com', 'Mox Card 交易被拒絕', cfg);
+    assert.strictEqual(r.ruleId, 'mox-all');
+    assert.strictEqual(r.bucket, 'notifications');
+    // guard "拒絕" should fire on the fallthrough rule
+    assert.strictEqual(r.guarded, true);
+
+    fs.unlinkSync(tmp);
+  });
+
+  test('ignoreGuards:true returns guarded:false despite guard words in subject', () => {
+    const tmp = path.join(os.tmpdir(), 'ignoreguards-fixture.json');
+    fs.writeFileSync(tmp, JSON.stringify({
+      version: 1, guards: ['失敗', '拒絕'],
+      rules: [
+        { id: 'antbank-fail', bucket: 'notifications', domains: ['antbank.hk'], subject: '還款失敗', ignoreGuards: true }
+      ]
+    }));
+    const cfg = loadRules(tmp);
+    const r = classify('svc@notify.antbank.hk', '還款失敗通知', cfg);
+    assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.ruleId, 'antbank-fail');
+    assert.strictEqual(r.guarded, false);
+    fs.unlinkSync(tmp);
+  });
+
+  test('ignoreGuards absent (default false) → guarded:true with guard word', () => {
+    const tmp = path.join(os.tmpdir(), 'no-ignoreguards-fixture.json');
+    fs.writeFileSync(tmp, JSON.stringify({
+      version: 1, guards: ['失敗'],
+      rules: [
+        { id: 'antbank-notif', bucket: 'notifications', domains: ['antbank.hk'], subject: '還款' }
+      ]
+    }));
+    const cfg = loadRules(tmp);
+    const r = classify('svc@notify.antbank.hk', '還款失敗', cfg);
+    assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.ruleId, 'antbank-notif');
+    assert.strictEqual(r.guarded, true);
+    fs.unlinkSync(tmp);
+  });
+});
+
+describe('classify real-config parity for subjectExclude', () => {
+  const config = loadRules(CONFIG_PATH);
+
+  test('Mox Card 交易被拒絕 does NOT return mox-tx/accounting', () => {
+    const r = classify('notify@mox.com', 'Mox Card 交易被拒絕', config);
+    // With only the exclude in place (no dedicated notifications rule for this yet),
+    // it should not be accounting/mox-tx
+    if (r.bucket !== null) {
+      assert.notStrictEqual(r.ruleId, 'mox-tx');
+    }
+  });
+
+  test('取消交易通知 still returns accounting mox-tx', () => {
+    const r = classify('notify@mox.com', '取消交易通知', config);
+    assert.strictEqual(r.bucket, 'accounting');
+    assert.strictEqual(r.ruleId, 'mox-tx');
   });
 });
 

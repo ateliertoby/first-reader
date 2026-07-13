@@ -152,7 +152,9 @@ export async function sort(options = {}) {
       if (!tx) noparseLines.push(`  [NOPARSE] ${senderAddr} — ${subject}`);
       if (!dryRun) {
         if (tx) txDb.insert({ ...tx, raw_subject: subject, email_id: msg.id });
-        await graphPost(`/me/messages/${msg.id}/move`, { destinationId: accountingFolderId });
+        // move 會改 message id — audit log 要記新 id，unsort 先搵得返
+        const movedMsg = await graphPost(`/me/messages/${msg.id}/move`, { destinationId: accountingFolderId });
+        if (movedMsg?.id) logEntry.email_id = movedMsg.id;
       }
       logEntry.action = 'moved';
       if (!dryRun) logDb.insert(logEntry);
@@ -160,7 +162,8 @@ export async function sort(options = {}) {
       counts.moved++;
     } else if (result.bucket === 'notifications') {
       if (!dryRun) {
-        await graphPost(`/me/messages/${msg.id}/move`, { destinationId: notificationsFolderId });
+        const movedMsg = await graphPost(`/me/messages/${msg.id}/move`, { destinationId: notificationsFolderId });
+        if (movedMsg?.id) logEntry.email_id = movedMsg.id;
       }
       logEntry.action = 'moved';
       logEntry.parsed = null;

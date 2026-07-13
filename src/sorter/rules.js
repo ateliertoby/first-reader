@@ -40,11 +40,26 @@ export function loadRules(configPath = DEFAULT_CONFIG) {
       }
     }
 
+    let subjectExcludeRe = null;
+    if (rule.subjectExclude) {
+      try {
+        subjectExcludeRe = new RegExp(rule.subjectExclude, 'i');
+      } catch (e) {
+        throw new Error(`bad subjectExclude regex in rule ${rule.id}: ${e.message}`);
+      }
+    }
+
+    if (rule.ignoreGuards !== undefined && typeof rule.ignoreGuards !== 'boolean') {
+      throw new Error(`ignoreGuards must be boolean in rule ${rule.id}`);
+    }
+
     compiled.push({
       id: rule.id,
       bucket: rule.bucket,
       domains: rule.domains.slice().sort((a, b) => b.length - a.length),
       subjectRe,
+      subjectExcludeRe,
+      ignoreGuards: rule.ignoreGuards || false,
       probationUntil: rule.probationUntil || null,
       note: rule.note || null,
       added: rule.added || null
@@ -85,6 +100,7 @@ export function classify(senderAddress, subject, config) {
     if (!matched) continue;
 
     if (rule.subjectRe && !rule.subjectRe.test(subj)) continue;
+    if (rule.subjectExcludeRe && rule.subjectExcludeRe.test(subj)) continue;
 
     const pri = BUCKET_ORDER[rule.bucket];
     if (pri < bestBucketPri || (pri === bestBucketPri && matchedDomainLen > bestDomainLen)) {
@@ -97,7 +113,7 @@ export function classify(senderAddress, subject, config) {
   if (!bestMatch) return { bucket: null };
 
   let guarded = false;
-  if (bestMatch.bucket !== 'keep') {
+  if (bestMatch.bucket !== 'keep' && !bestMatch.ignoreGuards) {
     const subjLower = subj.toLowerCase();
     for (const g of guards) {
       if (subjLower.includes(g)) {

@@ -111,4 +111,45 @@ describe('rule mutations (pure functions)', () => {
   test('removeGuard throws on missing', () => {
     assert.throws(() => removeGuard(baseConfig, 'xyz'), /not found/);
   });
+
+  test('addRule with ignoreGuards flag lands in entry', () => {
+    const { config } = addRule(baseConfig, {
+      bucket: 'notifications',
+      domains: ['fail.com'],
+      subject: '還款失敗',
+      subjectExclude: null,
+      ignoreGuards: true,
+      note: null
+    });
+    const added = config.rules[config.rules.length - 1];
+    assert.strictEqual(added.ignoreGuards, true);
+  });
+
+  test('addRule with subjectExclude lands in entry', () => {
+    const { config } = addRule(baseConfig, {
+      bucket: 'accounting',
+      domains: ['bank.com'],
+      subject: '交易',
+      subjectExclude: '被拒',
+      ignoreGuards: false,
+      note: null
+    });
+    const added = config.rules[config.rules.length - 1];
+    assert.strictEqual(added.subjectExclude, '被拒');
+    assert.strictEqual(added.ignoreGuards, undefined);
+  });
+
+  test('addRule without new fields omits them from entry', () => {
+    const { config } = addRule(baseConfig, {
+      bucket: 'notifications',
+      domains: ['plain.com'],
+      subject: null,
+      subjectExclude: null,
+      ignoreGuards: false,
+      note: null
+    });
+    const added = config.rules[config.rules.length - 1];
+    assert.strictEqual(added.subjectExclude, undefined);
+    assert.strictEqual(added.ignoreGuards, undefined);
+  });
 });
