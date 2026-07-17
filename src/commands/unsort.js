@@ -39,8 +39,10 @@ export async function unsortCommand(options) {
   for (const row of rows) {
     if (!dryRun) {
       try {
-        await graphPost(`/me/messages/${row.email_id}/move`, { destinationId: destId });
-        logDb.insert({ ...row, action: 'unsorted', run_at: new Date().toISOString(), parsed: null });
+        // Graph move returns a new message object with a different id
+        const movedMsg = await graphPost(`/me/messages/${row.email_id}/move`, { destinationId: destId });
+        const newId = movedMsg?.id || row.email_id;
+        logDb.insert({ ...row, email_id: newId, action: 'unsorted', run_at: new Date().toISOString(), parsed: null });
         moved++;
       } catch (e) {
         console.log(`  Failed: ${row.email_id} — ${e.message}`);

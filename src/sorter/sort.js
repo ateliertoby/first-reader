@@ -50,11 +50,13 @@ async function ensureFolder(name) {
 }
 
 async function fetchAllMessages(startFilter, endFilter, limit) {
+  // lastModifiedDateTime ge start: catches emails moved INTO inbox after receivedDateTime (junk rescue, unsort, manual drag)
+  // receivedDateTime le end: preserves min-age dwell gate on fresh emails
   const params = {
     top: 100,
-    orderby: 'receivedDateTime desc',
-    select: 'id,subject,from,receivedDateTime,isRead',
-    filter: `receivedDateTime ge ${startFilter} and receivedDateTime le ${endFilter}`
+    orderby: 'lastModifiedDateTime desc',
+    select: 'id,subject,from,receivedDateTime,lastModifiedDateTime,isRead',
+    filter: `lastModifiedDateTime ge ${startFilter} and receivedDateTime le ${endFilter}`
   };
   const url = buildGraphUrl('/me/mailFolders/inbox/messages', params);
   let result = await graphGet(url);
@@ -108,11 +110,19 @@ export async function sort(options = {}) {
     const txDb = new TransactionDB(DB_PATH);
     const logDb = new SortLogDB(DB_PATH);
 
-    const counts = { moved: 0, kept: 0, guardBlocked: 0, keptRule: 0, noparse: 0 };
+    const counts = { moved: 0, kept: 0, guardBlocked: 0, keptRule: 0, noparse: 0, pinned: 0 };
     const guardedLines = [];
     const noparseLines = [];
+    const pinnedLines = [];
 
     for (const msg of messages) {
+      // Unsorted emails are pinned — skip classification so they stay in inbox
+      if (logDb.isUnsorted(msg.id)) {
+        counts.pinned++;
+        pinnedLines.push(`  [PINNED] ${msg.from?.emailAddress?.address || ''} — ${msg.subject || ''}`);
+        continue;
+      }
+
       const senderAddr = msg.from?.emailAddress?.address || '';
       const subject = msg.subject || '';
       const domain = senderAddr.toLowerCase().split('@').pop() || '';
@@ -192,7 +202,8 @@ export async function sort(options = {}) {
     logDb.close();
 
     // Summary
-    console.log(`Sorted ${messages.length} emails: ${counts.moved} moved, ${counts.kept} kept, ${counts.guardBlocked} guard-blocked, ${counts.keptRule} kept-rule.`);
+    console.log(`Sorted ${messages.length} emails: ${counts.moved} moved, ${counts.kept} kept, ${counts.guardBlocked} guard-blocked, ${counts.keptRule} kept-rule, ${counts.pinned} pinned.`);
+    for (const line of pinnedLines) console.log(line);
     for (const line of guardedLines) console.log(line);
     for (const line of noparseLines) console.log(line);
     if (noparseLines.length > 0) console.log(`${noparseLines.length} accounting emails with no parse result.`);

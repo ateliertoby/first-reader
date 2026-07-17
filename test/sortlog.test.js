@@ -239,4 +239,57 @@ describe('SortLogDB', () => {
     assert.strictEqual(rows.length, 1);
     assert.strictEqual(rows[0].email_id, 'msg-b');
   });
+
+  test('isUnsorted returns true for email with unsorted action', () => {
+    db.insert({
+      run_at: '2026-07-13T10:00:00Z', email_id: 'msg-pinned',
+      sender: 'a@x.com', domain: 'x.com', subject: 's', subject_key: 's',
+      received_at: '2026-07-13T09:00:00Z', bucket: 'notifications',
+      rule_id: 'github', action: 'moved', parsed: null
+    });
+    db.insert({
+      run_at: '2026-07-13T11:00:00Z', email_id: 'msg-pinned',
+      sender: 'a@x.com', domain: 'x.com', subject: 's', subject_key: 's',
+      received_at: '2026-07-13T09:00:00Z', bucket: 'notifications',
+      rule_id: 'github', action: 'unsorted', parsed: null
+    });
+    assert.strictEqual(db.isUnsorted('msg-pinned'), true);
+  });
+
+  test('isUnsorted returns false for email with no unsorted action', () => {
+    db.insert({
+      run_at: '2026-07-13T10:00:00Z', email_id: 'msg-normal',
+      sender: 'b@x.com', domain: 'x.com', subject: 's', subject_key: 's',
+      received_at: '2026-07-13T09:00:00Z', bucket: 'notifications',
+      rule_id: 'github', action: 'moved', parsed: null
+    });
+    assert.strictEqual(db.isUnsorted('msg-normal'), false);
+  });
+
+  test('isUnsorted returns false for unknown email id', () => {
+    assert.strictEqual(db.isUnsorted('nonexistent'), false);
+  });
+
+  test('isUnsorted with new id after move (unsort captures post-move id)', () => {
+    // The original email was moved (old id logged as 'moved'),
+    // then unsort moves it back and logs the NEW id as 'unsorted'.
+    // The sort loop sees the new id, so isUnsorted must match on the new id.
+    db.insert({
+      run_at: '2026-07-13T10:00:00Z', email_id: 'old-id-before-sort',
+      sender: 'a@x.com', domain: 'x.com', subject: 's', subject_key: 's',
+      received_at: '2026-07-13T09:00:00Z', bucket: 'notifications',
+      rule_id: 'github', action: 'moved', parsed: null
+    });
+    // unsort logs with the new id that Graph returned after moving back to inbox
+    db.insert({
+      run_at: '2026-07-13T12:00:00Z', email_id: 'new-id-after-unsort',
+      sender: 'a@x.com', domain: 'x.com', subject: 's', subject_key: 's',
+      received_at: '2026-07-13T09:00:00Z', bucket: 'notifications',
+      rule_id: 'github', action: 'unsorted', parsed: null
+    });
+    // Sort loop fetches message with the new id
+    assert.strictEqual(db.isUnsorted('new-id-after-unsort'), true);
+    // Old id is not pinned (it no longer exists in the mailbox)
+    assert.strictEqual(db.isUnsorted('old-id-before-sort'), false);
+  });
 });

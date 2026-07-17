@@ -80,6 +80,13 @@ export class SortLogDB {
     return result.changes > 0;
   }
 
+  isUnsorted(emailId) {
+    const row = this.db.prepare(
+      `SELECT 1 FROM sort_log WHERE email_id = ? AND action = 'unsorted' LIMIT 1`
+    ).get(emailId);
+    return !!row;
+  }
+
   movedSince(since, { ruleId, sender, domain } = {}) {
     let sql = `SELECT * FROM sort_log WHERE action = 'moved' AND run_at >= ?`;
     const params = [since];
