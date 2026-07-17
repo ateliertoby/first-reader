@@ -108,6 +108,13 @@ export class SortLogDB {
     return !row;
   }
 
+  ruleHasMovedBefore(ruleId, before) {
+    const row = this.db.prepare(
+      `SELECT 1 FROM sort_log WHERE rule_id = ? AND action = 'moved' AND run_at < ? LIMIT 1`
+    ).get(ruleId, before);
+    return !!row;
+  }
+
   listUnsortable({ sender, ruleId, emailId, since } = {}) {
     let sql = `SELECT * FROM sort_log WHERE action = 'moved' AND email_id NOT IN (SELECT email_id FROM sort_log WHERE action = 'unsorted')`;
     const params = [];

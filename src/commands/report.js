@@ -55,6 +55,8 @@ export function groupKept(rows) {
 export function markNovelty(groups, logDb, windowStart) {
   for (const g of groups) {
     if (g.probation) continue;
+    // Skip novelty for rules with no pre-window history (bootstrap gate)
+    if (!logDb.ruleHasMovedBefore(g.ruleId, windowStart)) continue;
     // Check each unique subject_key for novelty
     const seen = new Set();
     for (const row of g._rows || []) {
@@ -141,11 +143,12 @@ export async function reportCommand(options) {
   const guardBlocked = rows.filter(r => r.action === 'guard-blocked');
   const noparse = rows.filter(r => r.action === 'moved' && r.parsed === 0);
   const unsorted = rows.filter(r => r.action === 'unsorted');
+  const runErrors = rows.filter(r => r.action === 'run-error');
   const kept = groupKept(rows);
   for (const g of kept) g.historicalCount = logDb.domainHistory(g.domain);
   logDb.close();
 
-  const report = { simulated, moved, guardBlocked, noparse, unsorted, kept };
+  const report = { simulated, moved, guardBlocked, noparse, unsorted, runErrors, kept };
 
   if (json) {
     console.log(JSON.stringify(report, null, 2));
@@ -183,6 +186,11 @@ export async function reportCommand(options) {
   if (unsorted.length > 0) {
     console.log('\nUnsorted (moved back to inbox):');
     for (const r of unsorted) console.log(`  ${r.sender} — ${r.subject}`);
+  }
+
+  if (runErrors.length > 0) {
+    console.log('\nRun errors:');
+    for (const r of runErrors) console.log(`  ${r.run_at} — ${r.subject}`);
   }
 
   if (kept.length > 0) {

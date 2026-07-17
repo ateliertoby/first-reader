@@ -75,127 +75,154 @@ export async function sort(options = {}) {
   const dryRun = options.dryRun || false;
   const now = new Date().toISOString();
 
-  const config = loadRules();
-  const minAgeHours = options.minAge !== undefined ? options.minAge : config.settings.minAgeHours;
+  try {
+    const config = loadRules();
+    const minAgeHours = options.minAge !== undefined ? options.minAge : config.settings.minAgeHours;
 
-  const state = loadState();
-  const window = computeWindow({ state, since: options.since, now, minAgeHours });
+    const state = loadState();
+    const window = computeWindow({ state, since: options.since, now, minAgeHours });
 
-  if (window.initialize) {
-    const initEnd = new Date(new Date(now).getTime() - minAgeHours * 3600_000).toISOString();
-    if (!dryRun) saveState({ processedThrough: initEnd });
-    console.log('First run: watermark initialized. No messages processed.');
-    return { moved: 0, kept: 0, guardBlocked: 0 };
-  }
+    if (window.initialize) {
+      const initEnd = new Date(new Date(now).getTime() - minAgeHours * 3600_000).toISOString();
+      if (!dryRun) saveState({ processedThrough: initEnd });
+      console.log('First run: watermark initialized. No messages processed.');
+      return { moved: 0, kept: 0, guardBlocked: 0 };
+    }
 
-  if (window.tooSoon) {
-    console.log('Too soon: not enough time elapsed since last run. No messages processed.');
-    return { moved: 0, kept: 0, guardBlocked: 0 };
-  }
-  const [accountingFolderId, notificationsFolderId] = await Promise.all([
-    ensureFolder('Accounting'),
-    ensureFolder('Notifications')
-  ]);
+    if (window.tooSoon) {
+      console.log('Too soon: not enough time elapsed since last run. No messages processed.');
+      return { moved: 0, kept: 0, guardBlocked: 0 };
+    }
+    const [accountingFolderId, notificationsFolderId] = await Promise.all([
+      ensureFolder('Accounting'),
+      ensureFolder('Notifications')
+    ]);
 
-  const messages = await fetchAllMessages(window.start, window.end, options.limit || null);
-  if (messages.length === 0) {
-    console.log('No messages to sort.');
+    const messages = await fetchAllMessages(window.start, window.end, options.limit || null);
+    if (messages.length === 0) {
+      console.log('No messages to sort.');
+      if (!dryRun) saveState({ processedThrough: window.end });
+      return { moved: 0, kept: 0, guardBlocked: 0 };
+    }
+
+    const txDb = new TransactionDB(DB_PATH);
+    const logDb = new SortLogDB(DB_PATH);
+
+    const counts = { moved: 0, kept: 0, guardBlocked: 0, keptRule: 0, noparse: 0 };
+    const guardedLines = [];
+    const noparseLines = [];
+
+    for (const msg of messages) {
+      const senderAddr = msg.from?.emailAddress?.address || '';
+      const subject = msg.subject || '';
+      const domain = senderAddr.toLowerCase().split('@').pop() || '';
+      const receivedAt = msg.receivedDateTime || '';
+      const sk = subjectKey(subject);
+
+      const result = classify(senderAddr, subject, config);
+      const logEntry = {
+        run_at: now,
+        email_id: msg.id,
+        sender: senderAddr,
+        domain,
+        subject,
+        subject_key: sk,
+        received_at: receivedAt,
+        bucket: result.bucket,
+        rule_id: result.ruleId || null,
+        action: null,
+        parsed: null
+      };
+
+      if (!result.bucket) {
+        logEntry.action = 'kept';
+        if (!dryRun) logDb.insert(logEntry);
+        counts.kept++;
+        continue;
+      }
+
+      if (result.guarded) {
+        logEntry.action = 'guard-blocked';
+        if (!dryRun) logDb.insert(logEntry);
+        counts.guardBlocked++;
+        guardedLines.push(`  [GUARD] ${senderAddr} — ${subject}`);
+        continue;
+      }
+
+      if (result.bucket === 'keep') {
+        logEntry.action = 'kept-rule';
+        if (!dryRun) logDb.insert(logEntry);
+        counts.keptRule++;
+        continue;
+      }
+
+      if (result.bucket === 'accounting') {
+        const fullMsg = await graphGet(`/me/messages/${msg.id}`);
+        let body = fullMsg.body?.content || '';
+        if (fullMsg.body?.contentType === 'html') {
+          body = body.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+        }
+        const tx = parseTransaction(senderAddr, subject, body, receivedAt);
+        logEntry.parsed = tx ? 1 : 0;
+        if (!tx) noparseLines.push(`  [NOPARSE] ${senderAddr} — ${subject}`);
+        if (!dryRun) {
+          if (tx) txDb.insert({ ...tx, raw_subject: subject, email_id: msg.id });
+          // move 會改 message id — audit log 要記新 id，unsort 先搵得返
+          const movedMsg = await graphPost(`/me/messages/${msg.id}/move`, { destinationId: accountingFolderId });
+          if (movedMsg?.id) logEntry.email_id = movedMsg.id;
+        }
+        logEntry.action = 'moved';
+        if (!dryRun) logDb.insert(logEntry);
+        else console.log(`  [would-move accounting] ${senderAddr} — ${subject}`);
+        counts.moved++;
+      } else if (result.bucket === 'notifications') {
+        if (!dryRun) {
+          const movedMsg = await graphPost(`/me/messages/${msg.id}/move`, { destinationId: notificationsFolderId });
+          if (movedMsg?.id) logEntry.email_id = movedMsg.id;
+        }
+        logEntry.action = 'moved';
+        logEntry.parsed = null;
+        if (!dryRun) logDb.insert(logEntry);
+        else console.log(`  [would-move notifications] ${senderAddr} — ${subject}`);
+        counts.moved++;
+      }
+    }
+
+    txDb.close();
+    logDb.close();
+
+    // Summary
+    console.log(`Sorted ${messages.length} emails: ${counts.moved} moved, ${counts.kept} kept, ${counts.guardBlocked} guard-blocked, ${counts.keptRule} kept-rule.`);
+    for (const line of guardedLines) console.log(line);
+    for (const line of noparseLines) console.log(line);
+    if (noparseLines.length > 0) console.log(`${noparseLines.length} accounting emails with no parse result.`);
+
     if (!dryRun) saveState({ processedThrough: window.end });
-    return { moved: 0, kept: 0, guardBlocked: 0 };
+    return counts;
+  } catch (err) {
+    // Record run error to sort_log — best effort
+    try {
+      const logDb = new SortLogDB(DB_PATH);
+      try {
+        logDb.insert({
+          run_at: now,
+          email_id: `run-${now}`,
+          sender: null,
+          domain: null,
+          subject: err.message,
+          subject_key: null,
+          received_at: null,
+          bucket: null,
+          rule_id: null,
+          action: 'run-error',
+          parsed: null
+        });
+      } finally {
+        logDb.close();
+      }
+    } catch {
+      // Swallow — the failure may be SortLogDB itself
+    }
+    throw err;
   }
-
-  const txDb = new TransactionDB(DB_PATH);
-  const logDb = new SortLogDB(DB_PATH);
-
-  const counts = { moved: 0, kept: 0, guardBlocked: 0, keptRule: 0, noparse: 0 };
-  const guardedLines = [];
-  const noparseLines = [];
-
-  for (const msg of messages) {
-    const senderAddr = msg.from?.emailAddress?.address || '';
-    const subject = msg.subject || '';
-    const domain = senderAddr.toLowerCase().split('@').pop() || '';
-    const receivedAt = msg.receivedDateTime || '';
-    const sk = subjectKey(subject);
-
-    const result = classify(senderAddr, subject, config);
-    const logEntry = {
-      run_at: now,
-      email_id: msg.id,
-      sender: senderAddr,
-      domain,
-      subject,
-      subject_key: sk,
-      received_at: receivedAt,
-      bucket: result.bucket,
-      rule_id: result.ruleId || null,
-      action: null,
-      parsed: null
-    };
-
-    if (!result.bucket) {
-      logEntry.action = 'kept';
-      if (!dryRun) logDb.insert(logEntry);
-      counts.kept++;
-      continue;
-    }
-
-    if (result.guarded) {
-      logEntry.action = 'guard-blocked';
-      if (!dryRun) logDb.insert(logEntry);
-      counts.guardBlocked++;
-      guardedLines.push(`  [GUARD] ${senderAddr} — ${subject}`);
-      continue;
-    }
-
-    if (result.bucket === 'keep') {
-      logEntry.action = 'kept-rule';
-      if (!dryRun) logDb.insert(logEntry);
-      counts.keptRule++;
-      continue;
-    }
-
-    if (result.bucket === 'accounting') {
-      const fullMsg = await graphGet(`/me/messages/${msg.id}`);
-      let body = fullMsg.body?.content || '';
-      if (fullMsg.body?.contentType === 'html') {
-        body = body.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
-      }
-      const tx = parseTransaction(senderAddr, subject, body, receivedAt);
-      logEntry.parsed = tx ? 1 : 0;
-      if (!tx) noparseLines.push(`  [NOPARSE] ${senderAddr} — ${subject}`);
-      if (!dryRun) {
-        if (tx) txDb.insert({ ...tx, raw_subject: subject, email_id: msg.id });
-        // move 會改 message id — audit log 要記新 id，unsort 先搵得返
-        const movedMsg = await graphPost(`/me/messages/${msg.id}/move`, { destinationId: accountingFolderId });
-        if (movedMsg?.id) logEntry.email_id = movedMsg.id;
-      }
-      logEntry.action = 'moved';
-      if (!dryRun) logDb.insert(logEntry);
-      else console.log(`  [would-move accounting] ${senderAddr} — ${subject}`);
-      counts.moved++;
-    } else if (result.bucket === 'notifications') {
-      if (!dryRun) {
-        const movedMsg = await graphPost(`/me/messages/${msg.id}/move`, { destinationId: notificationsFolderId });
-        if (movedMsg?.id) logEntry.email_id = movedMsg.id;
-      }
-      logEntry.action = 'moved';
-      logEntry.parsed = null;
-      if (!dryRun) logDb.insert(logEntry);
-      else console.log(`  [would-move notifications] ${senderAddr} — ${subject}`);
-      counts.moved++;
-    }
-  }
-
-  txDb.close();
-  logDb.close();
-
-  // Summary
-  console.log(`Sorted ${messages.length} emails: ${counts.moved} moved, ${counts.kept} kept, ${counts.guardBlocked} guard-blocked, ${counts.keptRule} kept-rule.`);
-  for (const line of guardedLines) console.log(line);
-  for (const line of noparseLines) console.log(line);
-  if (noparseLines.length > 0) console.log(`${noparseLines.length} accounting emails with no parse result.`);
-
-  if (!dryRun) saveState({ processedThrough: window.end });
-  return counts;
 }

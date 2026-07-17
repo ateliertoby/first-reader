@@ -107,4 +107,57 @@ describe('report grouping', () => {
     const groups = groupKept(rows);
     assert.strictEqual(groups[0].domain, 'b.com');
   });
+
+  test('markNovelty skips rule with no pre-window history (bootstrap gate)', () => {
+    const dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sortlog-')), 't.db');
+    const logDb = new SortLogDB(dbPath);
+    // NO pre-window history for 'hsbc-tx' — rule is brand new
+    const groups = groupMoved([
+      { action: 'moved', rule_id: 'hsbc-tx', bucket: 'accounting', subject: 'HSBC payment', subject_key: 'hsbc payment' },
+      { action: 'moved', rule_id: 'hsbc-tx', bucket: 'accounting', subject: 'HSBC transfer', subject_key: 'hsbc transfer' }
+    ], mockConfig, '2026-07-13T00:00:00Z');
+    markNovelty(groups, logDb, '2026-07-12T00:00:00Z');
+    logDb.close();
+    // Without the bootstrap gate, both subjects would be flagged as novel
+    assert.deepStrictEqual(groups[0].noveltySubjects, []);
+  });
+
+  test('markNovelty reports novel subjects for rule WITH pre-window history', () => {
+    const dbPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sortlog-')), 't.db');
+    const logDb = new SortLogDB(dbPath);
+    // Pre-window history exists for 'github'
+    logDb.insert({
+      run_at: '2026-07-01T00:00:00Z', email_id: 'hist1', sender: 'x@github.com',
+      domain: 'github.com', subject: 'PR merged', subject_key: 'pr merged',
+      received_at: '2026-07-01T00:00:00Z', bucket: 'notifications', rule_id: 'github',
+      action: 'moved', parsed: null
+    });
+    const groups = groupMoved([
+      { action: 'moved', rule_id: 'github', bucket: 'notifications', subject: 'PR merged #2', subject_key: 'pr merged' },
+      { action: 'moved', rule_id: 'github', bucket: 'notifications', subject: 'New: Dependabot', subject_key: 'new: dependabot' }
+    ], mockConfig, '2026-07-13T00:00:00Z');
+    markNovelty(groups, logDb, '2026-07-12T00:00:00Z');
+    logDb.close();
+    // 'pr merged' is known, 'new: dependabot' is novel
+    assert.deepStrictEqual(groups[0].noveltySubjects, ['New: Dependabot']);
+  });
+
+  test('runErrors included in report rows', () => {
+    // Verify run-error rows are filtered correctly from a mixed set
+    const rows = [
+      { action: 'moved', rule_id: 'github', bucket: 'notifications', subject: 'PR' },
+      { action: 'kept', rule_id: null, bucket: null, subject: 'hello', domain: 'x.com', received_at: '' },
+      { action: 'run-error', run_at: '2026-07-13T10:00:00Z', email_id: 'run-2026-07-13T10:00:00Z', subject: 'Graph API error: Backend Unknown', sender: null, domain: null },
+      { action: 'run-error', run_at: '2026-07-13T14:00:00Z', email_id: 'run-2026-07-13T14:00:00Z', subject: 'ECONNRESET', sender: null, domain: null }
+    ];
+    const runErrors = rows.filter(r => r.action === 'run-error');
+    assert.strictEqual(runErrors.length, 2);
+    assert.strictEqual(runErrors[0].subject, 'Graph API error: Backend Unknown');
+    assert.strictEqual(runErrors[1].subject, 'ECONNRESET');
+    // Ensure run-errors don't leak into other groups
+    const moved = groupMoved(rows, mockConfig);
+    assert.strictEqual(moved.length, 1);
+    const kept = groupKept(rows);
+    assert.strictEqual(kept.length, 1);
+  });
 });

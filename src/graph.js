@@ -2,6 +2,21 @@ import { getAuthenticatedClient } from './auth.js';
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
+let _retryDelays = [2000, 8000];
+let _testToken = null;
+
+export function setRetryDelays(delays) {
+  _retryDelays = delays;
+}
+
+export function _setTokenForTesting(token) {
+  _testToken = token;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export function buildGraphUrl(path, params = {}) {
   const queryParts = [];
   for (const [key, value] of Object.entries(params)) {
@@ -11,25 +26,46 @@ export function buildGraphUrl(path, params = {}) {
 }
 
 async function graphFetch(path, options = {}) {
-  const token = await getAuthenticatedClient();
+  const token = _testToken || await getAuthenticatedClient();
   const url = path.startsWith('https://') ? path : `${GRAPH_BASE}${path}`;
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...options.headers
-    }
-  });
 
-  if (!response.ok) {
+  let lastError;
+  for (let attempt = 0; attempt <= _retryDelays.length; attempt++) {
+    if (attempt > 0) {
+      await sleep(_retryDelays[attempt - 1]);
+    }
+
+    let response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          ...options.headers
+        }
+      });
+    } catch (err) {
+      // Network/fetch error — retryable
+      lastError = err;
+      continue;
+    }
+
+    if (response.ok) {
+      if (response.status === 204) return null;
+      return response.json();
+    }
+
     const error = await response.json().catch(() => ({}));
     const msg = error?.error?.message || `HTTP ${response.status}`;
-    throw new Error(`Graph API error: ${msg}`);
+    lastError = new Error(`Graph API error: ${msg}`);
+
+    // Retry 5xx and 429 (throttling); throw immediately on other 4xx
+    if (response.status >= 500 || response.status === 429) continue;
+    throw lastError;
   }
 
-  if (response.status === 204) return null;
-  return response.json();
+  throw lastError;
 }
 
 export async function graphGet(path) {

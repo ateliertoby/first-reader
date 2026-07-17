@@ -159,6 +159,62 @@ describe('SortLogDB', () => {
     assert.strictEqual(db.isNovelSubject('mox-tx', 'some new subject', '2026-07-13T00:00:00Z'), true);
   });
 
+  test('ruleHasMovedBefore returns true with pre-window history', () => {
+    db.insert({
+      run_at: '2026-07-10T10:00:00Z', email_id: 'old-moved',
+      sender: 'a@mox.com', domain: 'mox.com', subject: 'tx', subject_key: 'tx',
+      received_at: '2026-07-10T09:00:00Z', bucket: 'accounting',
+      rule_id: 'mox-tx', action: 'moved', parsed: 1
+    });
+    assert.strictEqual(db.ruleHasMovedBefore('mox-tx', '2026-07-13T00:00:00Z'), true);
+  });
+
+  test('ruleHasMovedBefore returns false with no pre-window history', () => {
+    db.insert({
+      run_at: '2026-07-13T10:00:00Z', email_id: 'new-moved',
+      sender: 'a@mox.com', domain: 'mox.com', subject: 'tx', subject_key: 'tx',
+      received_at: '2026-07-13T09:00:00Z', bucket: 'accounting',
+      rule_id: 'mox-tx', action: 'moved', parsed: 1
+    });
+    assert.strictEqual(db.ruleHasMovedBefore('mox-tx', '2026-07-13T00:00:00Z'), false);
+  });
+
+  test('ruleHasMovedBefore returns false for unknown rule', () => {
+    assert.strictEqual(db.ruleHasMovedBefore('nonexistent', '2026-07-13T00:00:00Z'), false);
+  });
+
+  test('run-error row shape inserts and reads correctly', () => {
+    const now = '2026-07-13T10:00:00Z';
+    const inserted = db.insert({
+      run_at: now,
+      email_id: `run-${now}`,
+      sender: null,
+      domain: null,
+      subject: 'Graph API error: Target resource is currently on backend Unknown',
+      subject_key: null,
+      received_at: null,
+      bucket: null,
+      rule_id: null,
+      action: 'run-error',
+      parsed: null
+    });
+    assert.strictEqual(inserted, true);
+
+    const rows = db.db.prepare("SELECT * FROM sort_log WHERE action = 'run-error'").all();
+    assert.strictEqual(rows.length, 1);
+    const row = rows[0];
+    assert.strictEqual(row.action, 'run-error');
+    assert.strictEqual(row.email_id, `run-${now}`);
+    assert.strictEqual(row.run_at, now);
+    assert.ok(row.subject.includes('Target resource'));
+    assert.strictEqual(row.sender, null);
+    assert.strictEqual(row.domain, null);
+    assert.strictEqual(row.bucket, null);
+    assert.strictEqual(row.rule_id, null);
+    assert.strictEqual(row.received_at, null);
+    assert.strictEqual(row.parsed, null);
+  });
+
   test('listUnsortable excludes already unsorted', () => {
     db.insert({
       run_at: '2026-07-13T10:00:00Z', email_id: 'msg-a',
