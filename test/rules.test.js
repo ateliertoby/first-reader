@@ -222,9 +222,10 @@ describe('classify', () => {
     assert.strictEqual(r.bucket, 'accounting');
   });
 
-  test('Mox 分期設立 → notifications', () => {
+  test('Mox 設立分期並繳款 → accounting (payment event, not marketing)', () => {
     const r = classify('notify@mox.com', '你已成功設立分期及繳交你的月結單結欠', config);
-    assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.bucket, 'accounting');
+    assert.strictEqual(r.ruleId, 'mox-instalment');
   });
 
   test('Ant Bank PayLater payment → accounting', () => {
@@ -272,9 +273,16 @@ describe('classify', () => {
     assert.strictEqual(r.bucket, 'accounting');
   });
 
-  test('HKeToll payment → accounting', () => {
+  test('HKeToll 繳費通知 → notifications (payment reminder, not a transaction)', () => {
     const r = classify('do-not-reply2@hketoll.gov.hk', '易通行繳費通知', config);
+    assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.ruleId, 'hketoll-reminder');
+  });
+
+  test('HKeToll 交易通知 → accounting', () => {
+    const r = classify('do-not-reply2@hketoll.gov.hk', '易通行交易通知', config);
     assert.strictEqual(r.bucket, 'accounting');
+    assert.strictEqual(r.ruleId, 'hketoll-tx');
   });
 
   test('Dah Sing bill payment → accounting', () => {
@@ -362,9 +370,10 @@ describe('classify', () => {
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('HSBC 信用卡付款提示 → accounting', () => {
+  test('HSBC 信用卡付款提示 → notifications (bill-due reminder, not a transaction)', () => {
     const r = classify('hsbc@informationservices.hsbc.com.hk', '您的信用卡付款提示 Ref:[X0000000001]', config);
-    assert.strictEqual(r.bucket, 'accounting');
+    assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.ruleId, 'hsbc-card-due');
   });
 
   test('HSBC Receipt of inward payment → accounting', () => {
@@ -417,9 +426,10 @@ describe('classify', () => {
     assert.strictEqual(r.bucket, 'accounting');
   });
 
-  test('GlobalTel 料金 → accounting', () => {
+  test('GlobalTel 引き落とし → notifications (no amount in email, nothing to book)', () => {
     const r = classify('billing@globaltel-hk.example', '【GlobalTel】ご利用料金のお引き落としが完了いたしました', config);
-    assert.strictEqual(r.bucket, 'accounting');
+    assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.ruleId, 'globaltel-notif');
   });
 
   test('Stripe/Gridform receipt → accounting', () => {
