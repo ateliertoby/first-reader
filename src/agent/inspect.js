@@ -2,6 +2,7 @@
 // B7: answer "開唔開得" for a single email, NOT what it says
 
 import * as cheerio from 'cheerio';
+import { callCliLLM } from './cli-transport.js';
 
 let _testTransport = null;
 let _testGraphGet = null;
@@ -470,28 +471,13 @@ ${cappedHumanView}
 ${JSON.stringify(findings, null, 2)}
 </deterministic_findings>
 
-Analyze the above and deliver a safety verdict using the safety_verdict tool.`;
+Analyze the above and deliver a safety verdict.`;
 
   if (_testTransport) {
-    return _testTransport({ model, system: VERDICT_SYSTEM, user, tool: VERDICT_TOOL });
+    return _testTransport({ model, system: VERDICT_SYSTEM, user });
   }
 
-  const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  const client = new Anthropic();
-  const response = await client.messages.create({
-    model,
-    max_tokens: 2048,
-    system: VERDICT_SYSTEM,
-    messages: [{ role: 'user', content: user }],
-    tools: [VERDICT_TOOL],
-    tool_choice: { type: 'tool', name: 'safety_verdict' },
-  });
-
-  const toolBlock = response.content.find(b => b.type === 'tool_use');
-  if (!toolBlock) {
-    throw new Error('LLM response missing tool_use block');
-  }
-  return toolBlock.input;
+  return callCliLLM({ kind: 'inspect', system: VERDICT_SYSTEM, user, model });
 }
 
 // --- Compose report ---

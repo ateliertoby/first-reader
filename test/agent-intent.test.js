@@ -30,7 +30,6 @@ describe('parseIntent', () => {
     assert.strictEqual(captured.model, 'claude-sonnet-5');
     assert.ok(captured.system.includes('IRON RULE'));
     assert.ok(captured.user.includes('hello'));
-    assert.strictEqual(captured.tool.name, 'intent_parse');
     assert.strictEqual(result.reply_text, 'mock reply');
   });
 

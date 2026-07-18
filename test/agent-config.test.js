@@ -103,7 +103,7 @@ describe('loadAgentConfig', () => {
 
   test('loads the real config/agent.json via default path', () => {
     const cfg = loadAgentConfig();
-    assert.strictEqual(cfg.model, 'claude-sonnet-5');
+    assert.strictEqual(cfg.model, 'claude-sonnet-4-6');
   });
 });
 

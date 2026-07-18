@@ -9,7 +9,6 @@
     "test": "node --test test/**/*.test.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.112.3",
     "@azure/msal-node": "^2",
     "@microsoft/microsoft-graph-client": "^3",
     "better-sqlite3": "^12.11.1",

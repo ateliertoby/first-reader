@@ -11,6 +11,7 @@ import { createHandler } from './handler.js';
 import { graphGet, graphPost } from '../graph.js';
 import { makeGitRunner } from './ops.js';
 import { runFolderAudit } from './audit.js';
+import { cleanQueue } from './cli-transport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULTS = {
@@ -150,6 +151,9 @@ export async function runLoop({
   });
 
   const offsetRef = loadOffset(stateFile);
+
+  // Startup queue cleanup — stale requests/results from prior crashes
+  cleanQueue(getNow());
 
   // Startup drain
   await channel.drainOutbox(outboxDir);

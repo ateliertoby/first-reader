@@ -8,6 +8,7 @@ import { graphGet, buildGraphUrl } from '../graph.js';
 import { subjectKey } from '../sorter/rules.js';
 import { AgentDB } from './db.js';
 import { loadAgentConfig } from './config.js';
+import { callCliLLM } from './cli-transport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULTS = {
@@ -142,28 +143,13 @@ ${patterns.map(p =>
   ).join('\n')}
 </untrusted_email_data>
 
-Use the folder_audit tool. Flag any suspect patterns. Set clean=true only if zero suspects.`;
+Flag any suspect patterns. Set clean=true only if zero suspects.`;
 
   if (_testTransport) {
-    return _testTransport({ model, system: AUDIT_SYSTEM_PROMPT, user, tool: AUDIT_TOOL });
+    return _testTransport({ model, system: AUDIT_SYSTEM_PROMPT, user });
   }
 
-  const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  const client = new Anthropic();
-  const response = await client.messages.create({
-    model,
-    max_tokens: 4096,
-    system: AUDIT_SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: user }],
-    tools: [AUDIT_TOOL],
-    tool_choice: { type: 'tool', name: 'folder_audit' }
-  });
-
-  const toolBlock = response.content.find(b => b.type === 'tool_use');
-  if (!toolBlock) {
-    throw new Error('LLM response missing tool_use block');
-  }
-  return toolBlock.input;
+  return callCliLLM({ kind: 'audit', system: AUDIT_SYSTEM_PROMPT, user, model });
 }
 
 // --- Degraded report (LLM down) ---
