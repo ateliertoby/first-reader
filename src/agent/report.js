@@ -250,13 +250,60 @@ export async function runAgentReport({
       for (const line of dryRescueLog) console.log(line);
     }
 
+    // --- Body fetch (recon-grade: report shows WHAT emails say, not just THAT they exist) ---
+    // Targets: kept (unruled, inbox ids — valid), noparse (post-move ids — valid in Accounting),
+    // junk pending items. Cap: 25 bodies total, newest first. Fetch failures per-item are non-fatal.
+    const BODY_CAP = 25;
+    const bodyTargets = [];
+    // kept — inbox ids, valid
+    for (const g of kept) {
+      for (const sample of (g.samples || [])) {
+        if (sample.email_id) bodyTargets.push({ id: sample.email_id, received: sample.received_at, ref: sample });
+      }
+    }
+    // noparse — post-move ids, valid in Accounting folder
+    for (const row of noparse) {
+      if (row.email_id) bodyTargets.push({ id: row.email_id, received: row.received_at, ref: row });
+    }
+    // junk pending (not rescued)
+    for (const item of junkItems) {
+      if (item.flag !== 'rescued-rule' && item.id) {
+        bodyTargets.push({ id: item.id, received: item.received, ref: item });
+      }
+    }
+    // Sort newest first, then cap
+    bodyTargets.sort((a, b) => (b.received || '').localeCompare(a.received || ''));
+    const bodiesToFetch = bodyTargets.slice(0, BODY_CAP);
+    const bodiesTruncated = bodyTargets.length > BODY_CAP ? bodyTargets.length - BODY_CAP : 0;
+
+    for (const target of bodiesToFetch) {
+      try {
+        const msgData = await graphGet(
+          buildGraphUrl(`/me/messages/${target.id}`, { select: 'body,subject' })
+        );
+        let bodyText = msgData?.body?.content || '';
+        if (msgData?.body?.contentType === 'html') {
+          bodyText = bodyText.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+        }
+        // Collapse whitespace and truncate
+        bodyText = bodyText.replace(/\s+/g, ' ').trim();
+        if (bodyText.length > 1200) bodyText = bodyText.slice(0, 1200);
+        target.ref.body_excerpt = bodyText;
+      } catch {
+        // Non-fatal — skip this item, no excerpt attached
+      }
+    }
+
     // --- Report JSON ---
+    // Contract: body_excerpt (string, optional) on kept samples, noparse rows, junk pending items.
+    // bodiesTruncated (number) at top level when cap is hit.
     const reportJson = {
       window: { start: windowStart, end: windowEnd },
       sort: { moved, guardBlocked, noparse, unsorted, runErrors, kept, summary: { keptRuleCount, pinnedCount } },
       reminders: remindersForJson,
       questions: openQuestions,
-      junk: junkItems
+      junk: junkItems,
+      ...(bodiesTruncated > 0 ? { bodiesTruncated } : {}),
     };
 
     // Persist for handler context (handler reads this for intent parsing)

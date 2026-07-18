@@ -95,7 +95,29 @@ export class TelegramChannel {
   async send(text) {
     const parts = splitMessage(text);
     for (const part of parts) {
-      await this._call('sendMessage', { chat_id: this._chatId, text: part });
+      await this._call('sendMessage', {
+        chat_id: this._chatId,
+        text: part,
+        reply_markup: {
+          keyboard: [[{ text: '📋 Check email' }]],
+          resize_keyboard: true,
+          is_persistent: true,
+        },
+      });
+    }
+  }
+
+  // Register bot commands with BotFather — best-effort, never fatal
+  async setMyCommands() {
+    try {
+      await this._call('setMyCommands', {
+        commands: [
+          { command: 'report', description: '即刻出報告' },
+          { command: 'audit', description: '行 folder audit' },
+        ],
+      });
+    } catch (err) {
+      console.error(`setMyCommands failed (non-fatal): ${err.message}`);
     }
   }
 
