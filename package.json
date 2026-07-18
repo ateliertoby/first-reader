@@ -13,6 +13,7 @@
     "@azure/msal-node": "^2",
     "@microsoft/microsoft-graph-client": "^3",
     "better-sqlite3": "^12.11.1",
+    "cheerio": "^1.2.0",
     "commander": "^12",
     "dotenv": "^17.3.1"
   },

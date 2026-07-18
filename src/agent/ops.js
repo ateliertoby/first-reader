@@ -65,6 +65,7 @@ function validateOp(op) {
       if (!op.claim || typeof op.claim !== 'string') return 'claim 必須係 non-empty string';
       return null;
     case 'inspect':
+      if (!op.email_id || typeof op.email_id !== 'string') return 'email_id 必須係 non-empty string';
       return null;
     case 'note_add':
       if (!op.text || typeof op.text !== 'string') return 'text 必須係 non-empty string';
@@ -336,7 +337,15 @@ export async function executeOps(ops, deps) {
         }
 
         case 'inspect': {
-          results.push('未支援，B7 之後有');
+          try {
+            const report = await deps.runInspection(op.email_id, {
+              graphGet: deps.graphGet,
+              model: deps.model,
+            });
+            results.push(report);
+          } catch (e) {
+            results.push(`inspect 失敗：${e.message}`);
+          }
           break;
         }
 

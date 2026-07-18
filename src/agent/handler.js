@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import { parseIntent, runDeepVerify } from './intent.js';
 import { executeOps } from './ops.js';
+import { runInspection } from './inspect.js';
 
 function loadContext({ lastReportPath, agentDb, notesPath }) {
   let lastReport = null;
@@ -56,6 +57,8 @@ export function createHandler(deps) {
         deepVerify: deepVerify ?? (async (claim, emailCtx) => {
           return runDeepVerify({ model, claim, context: emailCtx });
         }),
+        runInspection: deps.runInspection ?? runInspection,
+        model,
         getNow: getNow ?? (() => new Date().toISOString()),
         userText: text,
       });

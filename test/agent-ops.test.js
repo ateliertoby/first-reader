@@ -50,6 +50,8 @@ function makeDeps(tmpDir, overrides = {}) {
     runAudit: overrides.runAudit ?? (async () => ({})),
     drainOutbox: overrides.drainOutbox ?? (async () => ({})),
     deepVerify: overrides.deepVerify ?? (async (claim) => `verified: ${claim}`),
+    runInspection: overrides.runInspection ?? (async (emailId) => `[SAFE] ${emailId}\n\n呢個係檢驗，唔係判決 — 開唔開你話事`),
+    model: overrides.model ?? 'test-model',
     getNow: overrides.getNow ?? (() => '2026-07-18T10:00:00Z'),
     userText: overrides.userText ?? 'test command',
     _agentDbOwned: !overrides.agentDb,
@@ -408,12 +410,15 @@ describe('executeOps', () => {
     assert.ok(results[0].includes('sender is legit'));
   });
 
-  test('inspect: returns B7 message', async () => {
-    const deps = makeDeps(tmpDir);
+  test('inspect: calls runInspection and returns report', async () => {
+    const deps = makeDeps(tmpDir, {
+      runInspection: async (emailId) => `[SAFE] Inspected ${emailId}\n\n呢個係檢驗，唔係判決 — 開唔開你話事`,
+    });
     const results = await executeOps([{ type: 'inspect', email_id: 'x' }], deps);
     closeDeps(deps);
 
-    assert.ok(results[0].includes('B7'));
+    assert.ok(results[0].includes('SAFE'));
+    assert.ok(results[0].includes('Inspected x'));
   });
 
   test('note_add: appends to notes file', async () => {
@@ -454,7 +459,7 @@ describe('executeOps', () => {
 
     assert.strictEqual(results.length, 2);
     assert.ok(results[0].includes('審計已完成'));
-    assert.ok(results[1].includes('B7'));
+    assert.ok(results[1].includes('SAFE'));
     agentDb.close();
   });
 
