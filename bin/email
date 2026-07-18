@@ -18,6 +18,8 @@ import { unsortCommand } from '../src/commands/unsort.js';
 import { reportCommand } from '../src/commands/report.js';
 import { rescueScanCommand } from '../src/commands/rescue-scan.js';
 import { runAgentReport } from '../src/agent/report.js';
+import { runLoop } from '../src/agent/loop.js';
+import { requireEnv } from '../src/agent/config.js';
 
 program
   .name('email')
@@ -170,5 +172,14 @@ program
   .description('Generate agent daily report')
   .option('--dry', 'Print report to stdout without any writes')
   .action((opts) => runAgentReport({ dry: !!opts.dry }));
+
+program
+  .command('agent-loop')
+  .description('Run the agent daemon loop (Telegram long-poll)')
+  .action(async () => {
+    const token = requireEnv('TELEGRAM_BOT_TOKEN');
+    const chatId = requireEnv('TELEGRAM_CHAT_ID');
+    await runLoop({ token, chatId });
+  });
 
 program.parse();
