@@ -253,28 +253,32 @@ export async function runAgentReport({
     // --- Body fetch (recon-grade: report shows WHAT emails say, not just THAT they exist) ---
     // Targets: kept (unruled, inbox ids — valid), noparse (post-move ids — valid in Accounting),
     // junk pending items. Cap: 25 bodies total, newest first. Fetch failures per-item are non-fatal.
+    // Dry mode fetches too (read-only — no writes).
     const BODY_CAP = 25;
     const bodyTargets = [];
-    // kept — inbox ids, valid
-    for (const g of kept) {
-      for (const sample of (g.samples || [])) {
-        if (sample.email_id) bodyTargets.push({ id: sample.email_id, received: sample.received_at, ref: sample });
-      }
+
+    // kept rows — use raw sortRows (email_id is inbox id, valid for unruled kept)
+    const keptRows = sortRows.filter(r => r.action === 'kept');
+    for (const row of keptRows) {
+      if (row.email_id) bodyTargets.push({ id: row.email_id, received: row.received_at, source: 'kept' });
     }
     // noparse — post-move ids, valid in Accounting folder
     for (const row of noparse) {
-      if (row.email_id) bodyTargets.push({ id: row.email_id, received: row.received_at, ref: row });
+      if (row.email_id) bodyTargets.push({ id: row.email_id, received: row.received_at, source: 'noparse', ref: row });
     }
     // junk pending (not rescued)
     for (const item of junkItems) {
       if (item.flag !== 'rescued-rule' && item.id) {
-        bodyTargets.push({ id: item.id, received: item.received, ref: item });
+        bodyTargets.push({ id: item.id, received: item.received, source: 'junk', ref: item });
       }
     }
     // Sort newest first, then cap
     bodyTargets.sort((a, b) => (b.received || '').localeCompare(a.received || ''));
     const bodiesToFetch = bodyTargets.slice(0, BODY_CAP);
     const bodiesTruncated = bodyTargets.length > BODY_CAP ? bodyTargets.length - BODY_CAP : 0;
+
+    // Map for kept rows (need to inject into kept groups post-hoc since groupKept creates new objects)
+    const keptExcerpts = new Map();
 
     for (const target of bodiesToFetch) {
       try {
@@ -288,9 +292,32 @@ export async function runAgentReport({
         // Collapse whitespace and truncate
         bodyText = bodyText.replace(/\s+/g, ' ').trim();
         if (bodyText.length > 1200) bodyText = bodyText.slice(0, 1200);
-        target.ref.body_excerpt = bodyText;
+
+        if (target.source === 'kept') {
+          keptExcerpts.set(target.id, bodyText);
+        } else {
+          target.ref.body_excerpt = bodyText;
+        }
       } catch {
         // Non-fatal — skip this item, no excerpt attached
+      }
+    }
+
+    // Inject kept excerpts into kept group samples (match by subject+received since
+    // groupKept samples don't carry email_id — rebuild via row lookup)
+    if (keptExcerpts.size > 0) {
+      const keptRowMap = new Map(keptRows.map(r => [r.email_id, r]));
+      for (const [emailId, excerpt] of keptExcerpts) {
+        const row = keptRowMap.get(emailId);
+        if (!row) continue;
+        for (const g of kept) {
+          if (g.domain !== row.domain) continue;
+          for (const sample of g.samples) {
+            if (sample.subject === row.subject && sample.received === row.received_at) {
+              sample.body_excerpt = excerpt;
+            }
+          }
+        }
       }
     }
 

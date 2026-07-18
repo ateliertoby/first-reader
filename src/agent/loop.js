@@ -147,6 +147,7 @@ export async function runLoop({
     runReport: reportFn,
     runAudit: auditFn,
     drainOutbox: () => channel.drainOutbox(outboxDir),
+    send: (text) => channel.send(text),
     getNow,
   });
 
@@ -154,9 +155,6 @@ export async function runLoop({
 
   // Startup queue cleanup — stale requests/results from prior crashes
   cleanQueue(getNow());
-
-  // Register bot commands — best-effort, non-fatal
-  await channel.setMyCommands();
 
   // Startup drain
   await channel.drainOutbox(outboxDir);
@@ -222,37 +220,13 @@ export async function runLoop({
 
       for (const msg of messages) {
         const now = getNow();
-        const text = msg.text || '';
-        const kind = text.startsWith('/') ? 'command' : 'reply';
+        const kind = msg.text?.startsWith('/') ? 'command' : 'reply';
         db.logEngagement(now, kind);
 
         // Opportunistic delivery — Toby is online, best time to send pending items
         await channel.drainOutbox(outboxDir);
 
-        // Direct commands — deterministic, no intent LLM, handled before handler
-        const normalized = text.trim();
-        if (normalized === '/report' || normalized === '\u{1F4CB} Check email') {
-          await channel.send('收到，整緊報告…');
-          reportFn({ dry: false }).then(() => channel.drainOutbox(outboxDir)).catch(err => {
-            console.error(`Direct /report error: ${err.message}`);
-            channel.send(`報告出錯：${err.message}`).catch(() => {});
-          });
-          continue;
-        }
-        if (normalized === '/audit') {
-          await channel.send('收到，行緊 audit…');
-          auditFn({ dry: false }).then(() => channel.drainOutbox(outboxDir)).catch(err => {
-            console.error(`Direct /audit error: ${err.message}`);
-            channel.send(`Audit 出錯：${err.message}`).catch(() => {});
-          });
-          continue;
-        }
-        if (normalized === '/start') {
-          await channel.send('我係你嘅 email first reader。用 /report 出報告，/audit 行 folder audit，或者直接同我講嘢。');
-          continue;
-        }
-
-        const replyText = await handler(text, { chatId: msg.chat?.id });
+        const replyText = await handler(msg.text, { chatId: msg.chat?.id });
         if (replyText) await channel.send(replyText);
       }
     }

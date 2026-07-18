@@ -422,7 +422,7 @@ describe('trigger_audit op wiring', () => {
     fs.rmSync(tmpDir, { recursive: true });
   });
 
-  test('trigger_audit calls deps.runAudit and drainOutbox', async () => {
+  test('trigger_audit returns ack immediately, fires audit in background', async () => {
     let auditCalled = false;
     let drainCalled = false;
 
@@ -443,13 +443,17 @@ describe('trigger_audit op wiring', () => {
       userText: 'audit',
     });
 
+    // Ack returned immediately
+    assert.ok(results[0].includes('收到'));
+    // Background work fires asynchronously
+    await new Promise(r => setTimeout(r, 10));
     assert.ok(auditCalled, 'runAudit should have been called');
     assert.ok(drainCalled, 'drainOutbox should have been called');
-    assert.ok(results[0].includes('審計已完成'));
     agentDb.close();
   });
 
-  test('trigger_audit returns failure message on runAudit throw', async () => {
+  test('trigger_audit error reported via send (fire-and-forget)', async () => {
+    let sentError = null;
     const agentDb = new AgentDB(path.join(tmpDir, 'agent.db'));
     const results = await executeOps([{ type: 'trigger_audit' }], {
       rulesPath: path.join(tmpDir, 'rules.json'),
@@ -462,13 +466,18 @@ describe('trigger_audit op wiring', () => {
       runReport: async () => ({}),
       runAudit: async () => { throw new Error('Graph API down'); },
       drainOutbox: async () => ({}),
+      send: async (text) => { sentError = text; },
       deepVerify: async () => '',
       getNow: () => '2026-07-18T10:00:00Z',
       userText: 'audit',
     });
 
-    assert.ok(results[0].includes('審計失敗'));
-    assert.ok(results[0].includes('Graph API down'));
+    // Ack returned immediately
+    assert.ok(results[0].includes('收到'));
+    // Wait for background chain
+    await new Promise(r => setTimeout(r, 10));
+    assert.ok(sentError, 'error should have been sent');
+    assert.ok(sentError.includes('Graph API down'));
     agentDb.close();
   });
 });

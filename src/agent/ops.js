@@ -305,24 +305,26 @@ export async function executeOps(ops, deps) {
         }
 
         case 'trigger_report': {
-          try {
-            await deps.runReport({ dry: false });
-            await deps.drainOutbox();
-            results.push('報告已生成並送出');
-          } catch (e) {
-            results.push(`報告生成失敗：${e.message}`);
-          }
+          // Fire-and-forget — ack immediately, run in background so poll loop is not blocked
+          deps.runReport({ dry: false })
+            .then(() => deps.drainOutbox())
+            .catch(err => {
+              console.error(`trigger_report background error: ${err.message}`);
+              if (deps.send) deps.send(`報告出錯：${err.message}`).catch(() => {});
+            });
+          results.push('收到，睇緊 email…');
           break;
         }
 
         case 'trigger_audit': {
-          try {
-            await deps.runAudit({ dry: false });
-            await deps.drainOutbox();
-            results.push('審計已完成並送出');
-          } catch (e) {
-            results.push(`審計失敗：${e.message}`);
-          }
+          // Fire-and-forget — ack immediately, run in background so poll loop is not blocked
+          deps.runAudit({ dry: false })
+            .then(() => deps.drainOutbox())
+            .catch(err => {
+              console.error(`trigger_audit background error: ${err.message}`);
+              if (deps.send) deps.send(`Audit 出錯：${err.message}`).catch(() => {});
+            });
+          results.push('收到，行緊 audit…');
           break;
         }
 

@@ -365,7 +365,7 @@ describe('executeOps', () => {
     agentDb.close();
   });
 
-  test('trigger_report: calls runReport and drainOutbox', async () => {
+  test('trigger_report: returns ack immediately, fires report in background', async () => {
     let reportCalled = false;
     let drainCalled = false;
     const deps = makeDeps(tmpDir, {
@@ -376,12 +376,15 @@ describe('executeOps', () => {
     const results = await executeOps([{ type: 'trigger_report' }], deps);
     closeDeps(deps);
 
+    // Ack returned immediately
+    assert.ok(results[0].includes('收到'));
+    // Background work fires asynchronously — wait a tick for it to complete
+    await new Promise(r => setTimeout(r, 10));
     assert.ok(reportCalled);
     assert.ok(drainCalled);
-    assert.ok(results[0].includes('報告已生成'));
   });
 
-  test('trigger_audit: calls runAudit and drainOutbox', async () => {
+  test('trigger_audit: returns ack immediately, fires audit in background', async () => {
     let auditCalled = false;
     let drainCalled = false;
     const deps = makeDeps(tmpDir, {
@@ -391,9 +394,12 @@ describe('executeOps', () => {
     const results = await executeOps([{ type: 'trigger_audit' }], deps);
     closeDeps(deps);
 
+    // Ack returned immediately
+    assert.ok(results[0].includes('收到'));
+    // Background work fires asynchronously — wait a tick for it to complete
+    await new Promise(r => setTimeout(r, 10));
     assert.ok(auditCalled);
     assert.ok(drainCalled);
-    assert.ok(results[0].includes('審計已完成'));
   });
 
   test('deep_verify: calls deepVerify dep and returns evidence', async () => {
@@ -458,7 +464,7 @@ describe('executeOps', () => {
     ], deps);
 
     assert.strictEqual(results.length, 2);
-    assert.ok(results[0].includes('審計已完成'));
+    assert.ok(results[0].includes('收到'));
     assert.ok(results[1].includes('SAFE'));
     agentDb.close();
   });
@@ -473,7 +479,7 @@ describe('executeOps', () => {
 
     assert.strictEqual(results.length, 2);
     assert.ok(results[0].includes('bucket'));
-    assert.ok(results[1].includes('審計已完成'));
+    assert.ok(results[1].includes('收到'));
   });
 });
 

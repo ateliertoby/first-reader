@@ -32,7 +32,7 @@ export function createHandler(deps) {
     agentDb, model,
     rulesPath, notesPath, sortDbPath, lastReportPath,
     git, graphGet, graphPost,
-    runReport, runAudit, drainOutbox,
+    runReport, runAudit, drainOutbox, send,
     getNow, deepVerify,
   } = deps;
 
@@ -53,7 +53,7 @@ export function createHandler(deps) {
       const results = await executeOps(intent.ops, {
         rulesPath, notesPath, sortDbPath,
         agentDb, git, graphGet, graphPost,
-        runReport, runAudit, drainOutbox,
+        runReport, runAudit, drainOutbox, send,
         deepVerify: deepVerify ?? (async (claim, emailCtx) => {
           return runDeepVerify({ model, claim, context: emailCtx });
         }),
