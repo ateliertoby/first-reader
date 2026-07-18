@@ -465,3 +465,30 @@ describe('system prompt file handling', () => {
     assert.strictEqual(fs.existsSync(capturedSystemFile), false);
   });
 });
+
+describe('result write failure', () => {
+  test('failed write keeps the request (no rm issued)', async () => {
+    const { runWorker } = await import('../src/agent/worker.js');
+    const sshCalls = [];
+    const reqJson = JSON.stringify({
+      id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeffff0000', ts: '2026-07-18T08:00:00Z',
+      kind: 'render', model: 'm', tools: [], system: 's', user: 'u'
+    });
+    const deps = {
+      ssh: async (args, stdin) => {
+        sshCalls.push({ args, stdin });
+        const cmd = args[1] || '';
+        if (cmd.startsWith('ls ')) return { exitCode: 0, stdout: 'aaaaaaaa-bbbb-cccc-dddd-eeeeffff0000.json\n', stderr: '' };
+        if (cmd.startsWith('cat ') && cmd.includes('requests/')) return { exitCode: 0, stdout: reqJson, stderr: '' };
+        if (cmd.includes('results/tmp-')) return { exitCode: 1, stdout: '', stderr: 'No such file or directory' };
+        return { exitCode: 0, stdout: '', stderr: '' };
+      },
+      runClaude: async () => ({ exitCode: 0, stdout: JSON.stringify({ type: 'result', is_error: false, result: '{}' }), stderr: '' }),
+      sleep: async () => {},
+      now: () => '2026-07-18T08:01:00Z',
+    };
+    await runWorker({ deps, _maxCycles: 1 });
+    const rmCalls = sshCalls.filter(c => (c.args[1] || '').startsWith('rm '));
+    assert.strictEqual(rmCalls.length, 0, 'request must be kept when result write fails');
+  });
+});

@@ -91,6 +91,11 @@ function validateKeys(obj, kind) {
 function writeRequest(reqDir, request, _queueDir) {
   const dir = reqDir;
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  // Pre-create the results dir too — the worker's remote write lands there and
+  // must never fail on a missing directory (learned the hard way: a successful
+  // claude call was discarded because this dir did not exist).
+  const resultsDir = path.join(path.dirname(dir), 'results');
+  if (!fs.existsSync(resultsDir)) fs.mkdirSync(resultsDir, { recursive: true });
   const tmpPath = path.join(dir, `tmp-${request.id}.json`);
   const finalPath = path.join(dir, `${request.id}.json`);
   fs.writeFileSync(tmpPath, JSON.stringify(request, null, 2));

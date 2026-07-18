@@ -36,6 +36,10 @@ function prodRunClaude({ model, tools, systemFile, userContent }) {
     let stderr = '';
     child.stdout.on('data', (d) => { stdout += d; });
     child.stderr.on('data', (d) => { stderr += d; });
+    // spawn failures (ENOENT etc.) emit 'error', not 'close' — without this the process dies
+    child.on('error', (err) => {
+      resolve({ exitCode: 1, stdout, stderr: `${stderr}\nspawn error: ${err.message}` });
+    });
     child.on('close', (code) => {
       resolve({ exitCode: code ?? 1, stdout, stderr });
     });
@@ -151,12 +155,17 @@ async function processJob(request, deps) {
       }
     }
 
-    // Atomic write-back: single ssh command (cat > tmp && mv)
+    // Atomic write-back: single ssh command (mkdir -p; cat > tmp && mv).
+    // Write failure must NOT delete the request — leave it for the next cycle.
     const resultJson = JSON.stringify(resultPayload);
-    await deps.ssh(
-      ['macmini', `cat > ${REMOTE_QUEUE}/results/tmp-${id}.json && mv ${REMOTE_QUEUE}/results/tmp-${id}.json ${REMOTE_QUEUE}/results/${id}.json`],
+    const write = await deps.ssh(
+      ['macmini', `mkdir -p ${REMOTE_QUEUE}/results && cat > ${REMOTE_QUEUE}/results/tmp-${id}.json && mv ${REMOTE_QUEUE}/results/tmp-${id}.json ${REMOTE_QUEUE}/results/${id}.json`],
       resultJson,
     );
+    if (write.exitCode !== 0) {
+      console.error(`Result write failed for ${id} (exit ${write.exitCode}) — request kept for retry`);
+      return;
+    }
 
     // Delete request
     await deps.ssh(['macmini', `rm ${REMOTE_QUEUE}/requests/${id}.json`]);
