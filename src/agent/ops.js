@@ -315,7 +315,13 @@ export async function executeOps(ops, deps) {
         }
 
         case 'trigger_audit': {
-          results.push('審計功能未支援，B5 上線');
+          try {
+            await deps.runAudit({ dry: false });
+            await deps.drainOutbox();
+            results.push('審計已完成並送出');
+          } catch (e) {
+            results.push(`審計失敗：${e.message}`);
+          }
           break;
         }
 

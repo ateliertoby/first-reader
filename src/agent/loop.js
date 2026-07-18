@@ -10,6 +10,7 @@ import { runAgentReport } from './report.js';
 import { createHandler } from './handler.js';
 import { graphGet, graphPost } from '../graph.js';
 import { makeGitRunner } from './ops.js';
+import { runFolderAudit } from './audit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULTS = {
@@ -41,6 +42,55 @@ export function msUntilNext(reportTime, timezone, now) {
   return (diffMins * 60 - Number(parts.second)) * 1000;
 }
 
+// Pure — compute ms until next 1st-of-month at HH:MM in timezone from now
+export function msUntilNextMonthly(reportTime, timezone, now) {
+  const d = now instanceof Date ? now : new Date(now);
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23',
+  });
+  const parts = {};
+  for (const { type, value } of fmt.formatToParts(d)) parts[type] = value;
+
+  const [targetH, targetM] = reportTime.split(':').map(Number);
+  const dayOfMonth = Number(parts.day);
+  const nowMins = Number(parts.hour) * 60 + Number(parts.minute);
+  const targetMins = targetH * 60 + targetM;
+
+  // On the 1st and before the slot: fire today
+  if (dayOfMonth === 1 && nowMins < targetMins) {
+    return ((targetMins - nowMins) * 60 - Number(parts.second)) * 1000;
+  }
+
+  // Otherwise: next month's 1st at the slot
+  const year = Number(parts.year);
+  const month = Number(parts.month); // 1-indexed
+  // Build a Date for the 1st of next month at the target time in the timezone
+  // by computing offset from now to that target wall-clock moment
+  let nextYear = year;
+  let nextMonth = month + 1;
+  if (nextMonth > 12) { nextMonth = 1; nextYear++; }
+
+  // Use Intl to find the UTC instant for "next month 1st at targetH:targetM" in tz
+  // Approach: step forward by days until we reach the 1st of next month in tz,
+  // then compute the exact offset. More robust: just compute the difference.
+  const nowSec = Number(parts.second);
+  const nowTotalMins = (dayOfMonth - 1) * 1440 + nowMins;
+
+  // Days in current month (in local tz)
+  // Create a date for the last day of current month
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const daysUntilFirst = daysInMonth - dayOfMonth + 1;
+
+  // ms = days remaining until 1st + slot time offset
+  const minsUntilMidnight1st = daysUntilFirst * 1440 - nowMins;
+  const totalMs = ((minsUntilMidnight1st + targetMins) * 60 - nowSec) * 1000;
+
+  return totalMs;
+}
+
 function loadOffset(stateFile) {
   try {
     const data = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
@@ -63,7 +113,7 @@ export async function runLoop({
   _channel, _agentDb,
   _agentDbPath, _outboxDir, _stateFile,
   _reportTime, _timezone, _agentConfigPath,
-  _maxPolls, _runReport, _getNow,
+  _maxPolls, _runReport, _runAudit, _getNow,
 } = {}) {
   const agentDbPath = _agentDbPath ?? DEFAULTS.agentDbPath;
   const outboxDir = _outboxDir ?? DEFAULTS.outboxDir;
@@ -81,6 +131,7 @@ export async function runLoop({
   const channel = _channel ?? new TelegramChannel({ token, chatId });
   const db = _agentDb ?? new AgentDB(agentDbPath);
   const reportFn = _runReport ?? runAgentReport;
+  const auditFn = _runAudit ?? runFolderAudit;
 
   // Default handler = real intent handler; tests override via onMessage param
   const handler = onMessage ?? createHandler({
@@ -93,6 +144,7 @@ export async function runLoop({
     git: makeGitRunner(PROJECT_ROOT),
     graphGet, graphPost,
     runReport: reportFn,
+    runAudit: auditFn,
     drainOutbox: () => channel.drainOutbox(outboxDir),
     getNow,
   });
@@ -123,11 +175,29 @@ export async function runLoop({
     reportTimer.unref();
   }
 
+  // Schedule monthly audit timer (skip in test mode to avoid timer leaks)
+  let auditTimer = null;
+  function scheduleAudit() {
+    if (_maxPolls != null) return;
+    const ms = msUntilNextMonthly(reportTime, tz, new Date());
+    auditTimer = setTimeout(async () => {
+      try {
+        await auditFn({ dry: false });
+        await channel.drainOutbox(outboxDir);
+      } catch (err) {
+        console.error(`Scheduled audit error: ${err.message}`);
+      }
+      scheduleAudit();
+    }, ms);
+    auditTimer.unref();
+  }
+
   let running = true;
   const shutdown = () => { running = false; };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
   scheduleReport();
+  scheduleAudit();
 
   let polls = 0;
   try {
@@ -157,6 +227,7 @@ export async function runLoop({
     }
   } finally {
     if (reportTimer) clearTimeout(reportTimer);
+    if (auditTimer) clearTimeout(auditTimer);
     process.off('SIGTERM', shutdown);
     process.off('SIGINT', shutdown);
     if (!_agentDb) db.close();

@@ -47,6 +47,7 @@ function makeDeps(tmpDir, overrides = {}) {
     graphGet: overrides.graphGet ?? (async () => ({ id: 'inbox-id', value: [] })),
     graphPost: overrides.graphPost ?? (async () => ({ id: 'new-id' })),
     runReport: overrides.runReport ?? (async () => ({})),
+    runAudit: overrides.runAudit ?? (async () => ({})),
     drainOutbox: overrides.drainOutbox ?? (async () => ({})),
     deepVerify: overrides.deepVerify ?? (async (claim) => `verified: ${claim}`),
     getNow: overrides.getNow ?? (() => '2026-07-18T10:00:00Z'),
@@ -378,12 +379,19 @@ describe('executeOps', () => {
     assert.ok(results[0].includes('報告已生成'));
   });
 
-  test('trigger_audit: returns not-yet-supported', async () => {
-    const deps = makeDeps(tmpDir);
+  test('trigger_audit: calls runAudit and drainOutbox', async () => {
+    let auditCalled = false;
+    let drainCalled = false;
+    const deps = makeDeps(tmpDir, {
+      runAudit: async () => { auditCalled = true; },
+      drainOutbox: async () => { drainCalled = true; },
+    });
     const results = await executeOps([{ type: 'trigger_audit' }], deps);
     closeDeps(deps);
 
-    assert.ok(results[0].includes('B5'));
+    assert.ok(auditCalled);
+    assert.ok(drainCalled);
+    assert.ok(results[0].includes('審計已完成'));
   });
 
   test('deep_verify: calls deepVerify dep and returns evidence', async () => {
@@ -445,7 +453,7 @@ describe('executeOps', () => {
     ], deps);
 
     assert.strictEqual(results.length, 2);
-    assert.ok(results[0].includes('B5'));
+    assert.ok(results[0].includes('審計已完成'));
     assert.ok(results[1].includes('B7'));
     agentDb.close();
   });
@@ -460,7 +468,7 @@ describe('executeOps', () => {
 
     assert.strictEqual(results.length, 2);
     assert.ok(results[0].includes('bucket'));
-    assert.ok(results[1].includes('B5'));
+    assert.ok(results[1].includes('審計已完成'));
   });
 });
 
