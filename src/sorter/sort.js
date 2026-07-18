@@ -120,6 +120,16 @@ export async function sort(options = {}) {
       if (logDb.isUnsorted(msg.id)) {
         counts.pinned++;
         pinnedLines.push(`  [PINNED] ${msg.from?.emailAddress?.address || ''} — ${msg.subject || ''}`);
+        if (!dryRun) {
+          const pinAddr = msg.from?.emailAddress?.address || '';
+          logDb.insert({
+            run_at: now, email_id: msg.id, sender: pinAddr,
+            domain: pinAddr.toLowerCase().split('@').pop() || '',
+            subject: msg.subject || '', subject_key: subjectKey(msg.subject || ''),
+            received_at: msg.receivedDateTime || '',
+            bucket: null, rule_id: null, action: 'pinned', parsed: null
+          });
+        }
         continue;
       }
 

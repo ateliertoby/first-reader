@@ -17,6 +17,7 @@ import { ruleList, ruleAdd, ruleRm, ruleGuardAdd, ruleGuardRm } from '../src/com
 import { unsortCommand } from '../src/commands/unsort.js';
 import { reportCommand } from '../src/commands/report.js';
 import { rescueScanCommand } from '../src/commands/rescue-scan.js';
+import { runAgentReport } from '../src/agent/report.js';
 
 program
   .name('email')
@@ -163,5 +164,11 @@ program
   .option('--since <date>', 'Only emails after this date (YYYY-MM-DD)')
   .option('--folder <name>', 'Scan specific folder (Accounting or Notifications)')
   .action(rescueScanCommand);
+
+program
+  .command('agent-report')
+  .description('Generate agent daily report')
+  .option('--dry', 'Print report to stdout without any writes')
+  .action((opts) => runAgentReport({ dry: !!opts.dry }));
 
 program.parse();
