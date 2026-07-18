@@ -20,6 +20,7 @@ import { rescueScanCommand } from '../src/commands/rescue-scan.js';
 import { runAgentReport } from '../src/agent/report.js';
 import { runLoop } from '../src/agent/loop.js';
 import { requireEnv } from '../src/agent/config.js';
+import { runWorker } from '../src/agent/worker.js';
 
 program
   .name('email')
@@ -181,5 +182,10 @@ program
     const chatId = requireEnv('TELEGRAM_CHAT_ID');
     await runLoop({ token, chatId });
   });
+
+program
+  .command('llm-worker')
+  .description('Run the MBA-side LLM worker (polls Mini queue, invokes local claude)')
+  .action(() => runWorker());
 
 program.parse();
