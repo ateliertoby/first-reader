@@ -48,7 +48,7 @@ junk_dismiss — Dismiss junk item (stop reporting, let Outlook purge)
 
 trigger_report — Generate and send report now
   No params.
-  Casual triggers: "check email", "睇吓email", "report", "有冇新email", "check mail"
+  Casual triggers: "check email", "睇吓email", "report", "有冇新email", "check mail", "/check"
 
 trigger_audit — Run folder audit
   No params.

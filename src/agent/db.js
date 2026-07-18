@@ -5,6 +5,7 @@ import fs from 'node:fs';
 const VALID_ENGAGEMENT_KINDS = new Set(['reply', 'command', 'spontaneous']);
 const VALID_RUN_KINDS = new Set(['report', 'audit']);
 const VALID_RUN_STATUSES = new Set(['ok', 'degraded', 'failed']);
+const VALID_PENDING_STATUSES = new Set(['open', 'done', 'degraded']);
 
 export class AgentDB {
   constructor(dbPath) {
@@ -67,6 +68,22 @@ export class AgentDB {
       )
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_renders (
+        id INTEGER PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        window_start TEXT NOT NULL,
+        window_end TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        report_json TEXT NOT NULL,
+        enqueue_count INTEGER NOT NULL DEFAULT 1,
+        interim_notified INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        completed_at TEXT
+      )
+    `);
+
     // Questions
     this._addQuestion = this.db.prepare(`
       INSERT INTO agent_questions (asked_at, domain, question, status)
@@ -126,6 +143,27 @@ export class AgentDB {
     `);
     this._lastRun = this.db.prepare(
       `SELECT * FROM agent_runs WHERE kind = @kind ORDER BY run_at DESC LIMIT 1`
+    );
+
+    // Pending renders
+    this._insertPending = this.db.prepare(`
+      INSERT INTO pending_renders (created_at, origin, window_start, window_end, request_id, report_json, enqueue_count, status)
+      VALUES (@created_at, @origin, @window_start, @window_end, @request_id, @report_json, @enqueue_count, @status)
+    `);
+    this._openPendings = this.db.prepare(
+      `SELECT * FROM pending_renders WHERE status = 'open' ORDER BY created_at`
+    );
+    this._getPending = this.db.prepare(
+      `SELECT * FROM pending_renders WHERE id = @id`
+    );
+    this._updatePendingRequest = this.db.prepare(
+      `UPDATE pending_renders SET request_id = @request_id, enqueue_count = @enqueue_count WHERE id = @id`
+    );
+    this._setInterimNotified = this.db.prepare(
+      `UPDATE pending_renders SET interim_notified = 1 WHERE id = @id`
+    );
+    this._completePending = this.db.prepare(
+      `UPDATE pending_renders SET status = @status, completed_at = @completed_at WHERE id = @id`
     );
   }
 
@@ -226,6 +264,42 @@ export class AgentDB {
       throw new Error(`Invalid run kind: ${kind} (expected: ${[...VALID_RUN_KINDS].join(', ')})`);
     }
     return this._lastRun.get({ kind }) ?? null;
+  }
+
+  // --- Pending renders ---
+
+  insertPending({ created_at, origin, window_start, window_end, request_id, report_json, status }) {
+    if (!VALID_PENDING_STATUSES.has(status)) {
+      throw new Error(`Invalid pending status: ${status}`);
+    }
+    this._insertPending.run({
+      created_at, origin, window_start, window_end,
+      request_id, report_json,
+      enqueue_count: 1, status
+    });
+  }
+
+  openPendings() {
+    return this._openPendings.all();
+  }
+
+  getPending(id) {
+    return this._getPending.get({ id }) ?? null;
+  }
+
+  updatePendingRequest(id, requestId, enqueueCount) {
+    this._updatePendingRequest.run({ id, request_id: requestId, enqueue_count: enqueueCount });
+  }
+
+  setInterimNotified(id) {
+    this._setInterimNotified.run({ id });
+  }
+
+  completePending(id, status, completedAt) {
+    if (!VALID_PENDING_STATUSES.has(status)) {
+      throw new Error(`Invalid pending status: ${status}`);
+    }
+    this._completePending.run({ id, status, completed_at: completedAt });
   }
 
   close() {

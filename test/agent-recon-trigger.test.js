@@ -34,7 +34,10 @@ function writeRules(dir, extra = []) {
 
 function writeAgentConfig(dir) {
   const p = path.join(dir, 'agent.json');
-  fs.writeFileSync(p, JSON.stringify({ model: 'claude-sonnet-5' }));
+  fs.writeFileSync(p, JSON.stringify({
+    model: 'claude-sonnet-5',
+    idleHours: 24, renderDeadlineHours: 8, freshLookbackHours: 12
+  }));
   return p;
 }
 
@@ -74,6 +77,7 @@ function opts(tmpDir, overrides = {}) {
     _outboxDir: path.join(tmpDir, 'outbox'),
     _rulesPath: path.join(tmpDir, 'rules.json'),
     _agentConfigPath: path.join(tmpDir, 'agent.json'),
+    _queueDir: path.join(tmpDir, 'llm-queue'),
     _now: '2026-07-18T08:30:00Z',
     ...overrides
   };
@@ -132,7 +136,9 @@ describe('body fetch (recon-grade reports)', () => {
     };
 
     const result = await runAgentReport(opts(tmpDir));
-    const keptGroup = result.reportJson.sort.kept[0];
+    const _db = new AgentDB(path.join(tmpDir, 'agent.db'));
+    const _rj = JSON.parse(_db.openPendings()[0].report_json); _db.close();
+    const keptGroup = _rj.sort.kept[0];
     assert.ok(keptGroup, 'kept group should exist');
     const sample = keptGroup.samples[0];
     assert.strictEqual(sample.body_excerpt, 'Payment of $500 due by 2026-08-01');
@@ -168,7 +174,9 @@ describe('body fetch (recon-grade reports)', () => {
     };
 
     const result = await runAgentReport(opts(tmpDir));
-    const npRow = result.reportJson.sort.noparse[0];
+    const _db = new AgentDB(path.join(tmpDir, 'agent.db'));
+    const _rj = JSON.parse(_db.openPendings()[0].report_json); _db.close();
+    const npRow = _rj.sort.noparse[0];
     assert.strictEqual(npRow.body_excerpt, 'You received HKD 2,500.00 from John');
   });
 
@@ -198,7 +206,9 @@ describe('body fetch (recon-grade reports)', () => {
     };
 
     const result = await runAgentReport(opts(tmpDir));
-    const junkItem = result.reportJson.junk.find(j => j.id === 'j-pending-1');
+    const _db = new AgentDB(path.join(tmpDir, 'agent.db'));
+    const _rj = JSON.parse(_db.openPendings()[0].report_json); _db.close();
+    const junkItem = _rj.junk.find(j => j.id === 'j-pending-1');
     assert.ok(junkItem);
     assert.strictEqual(junkItem.body_excerpt, 'Claim your $1M prize now!');
   });
@@ -236,7 +246,9 @@ describe('body fetch (recon-grade reports)', () => {
     };
 
     const result = await runAgentReport(opts(tmpDir));
-    const sample = result.reportJson.sort.kept[0].samples[0];
+    const _db = new AgentDB(path.join(tmpDir, 'agent.db'));
+    const _rj = JSON.parse(_db.openPendings()[0].report_json); _db.close();
+    const sample = _rj.sort.kept[0].samples[0];
     assert.strictEqual(sample.body_excerpt, 'Your balance is $1,234.56 & more');
   });
 
@@ -271,7 +283,9 @@ describe('body fetch (recon-grade reports)', () => {
     };
 
     const result = await runAgentReport(opts(tmpDir));
-    const sample = result.reportJson.sort.kept[0].samples[0];
+    const _db = new AgentDB(path.join(tmpDir, 'agent.db'));
+    const _rj = JSON.parse(_db.openPendings()[0].report_json); _db.close();
+    const sample = _rj.sort.kept[0].samples[0];
     assert.strictEqual(sample.body_excerpt.length, 1200);
   });
 
@@ -314,7 +328,9 @@ describe('body fetch (recon-grade reports)', () => {
     // Only 25 fetches made (cap honored)
     assert.strictEqual(fetchedIds.length, 25);
     // bodiesTruncated reports count of skipped items
-    assert.strictEqual(result.reportJson.bodiesTruncated, 5);
+    const _db = new AgentDB(path.join(tmpDir, 'agent.db'));
+    const _rj = JSON.parse(_db.openPendings()[0].report_json); _db.close();
+    assert.strictEqual(_rj.bodiesTruncated, 5);
   });
 
   test('fetch error skips item without crashing', async () => {
@@ -357,13 +373,16 @@ describe('body fetch (recon-grade reports)', () => {
     };
 
     const result = await runAgentReport(opts(tmpDir));
-    assert.strictEqual(result.status, 'ok');
-    // The errored item has no body_excerpt; the OK one does
-    const samples = result.reportJson.sort.kept[0].samples;
+    assert.strictEqual(result.status, 'pending');
+    // Check the pending row's report_json
+    const db = new AgentDB(path.join(tmpDir, 'agent.db'));
+    const reportJson = JSON.parse(db.openPendings()[0].report_json);
+    const samples = reportJson.sort.kept[0].samples;
     const okSample = samples.find(s => s.subject === 'OK email');
     const errSample = samples.find(s => s.subject === 'Error email');
     assert.strictEqual(okSample.body_excerpt, 'OK body content');
     assert.strictEqual(errSample.body_excerpt, undefined);
+    db.close();
   });
 
   test('dry mode still fetches bodies (read-only)', async () => {
@@ -462,17 +481,20 @@ describe('LLM prompt includes body_excerpt', () => {
       return { ok: true, status: 200, json: async () => ({ value: [] }) };
     };
 
-    // Capture what the transport receives
-    let capturedUser = null;
-    _setLLMTransportForTesting(async ({ user }) => {
-      capturedUser = user;
-      return defaultLLMResponse();
-    });
+    // Non-dry: check the pending row's report_json contains body_excerpt
+    const result = await runAgentReport(opts(tmpDir));
+    assert.strictEqual(result.status, 'pending');
 
-    await runAgentReport(opts(tmpDir));
-    assert.ok(capturedUser, 'transport should have been called');
-    assert.ok(capturedUser.includes('body_excerpt'), 'user payload should contain body_excerpt key');
-    assert.ok(capturedUser.includes('Please pay HKD 3,000 by July 25th'), 'user payload should contain body text');
+    const db = new AgentDB(path.join(tmpDir, 'agent.db'));
+    const pendings = db.openPendings();
+    const reportJson = JSON.parse(pendings[0].report_json);
+    // body_excerpt should be injected into kept group samples
+    const keptSamples = reportJson.sort.kept.flatMap(g => g.samples);
+    const withExcerpt = keptSamples.filter(s => s.body_excerpt);
+    assert.ok(withExcerpt.length > 0, 'at least one kept sample should have body_excerpt');
+    assert.ok(withExcerpt[0].body_excerpt.includes('Please pay HKD 3,000 by July 25th'),
+      'body_excerpt should contain the email body text');
+    db.close();
   });
 });
 
@@ -551,21 +573,25 @@ describe('fire-and-forget trigger ops', () => {
     assert.strictEqual(auditResolved, true);
   });
 
-  test('trigger_report error calls send with error message', async () => {
-    let sentError = null;
+  test('trigger_report error writes to outbox', async () => {
+    const outboxDir = path.join(tmpDir, 'outbox');
     const deps = makeDeps({
       runReport: async () => { throw new Error('Graph API down'); },
-      send: async (text) => { sentError = text; },
     });
+    deps.outboxDir = outboxDir;
 
     const results = await executeOps([{ type: 'trigger_report' }], deps);
     deps._agentDb.close();
 
     assert.ok(results[0].includes('收到'));
     // Wait for the fire-and-forget chain to complete
-    await new Promise(r => setTimeout(r, 10));
-    assert.ok(sentError, 'error should have been sent');
-    assert.ok(sentError.includes('Graph API down'));
+    await new Promise(r => setTimeout(r, 50));
+    // Error should be written to outbox
+    assert.ok(fs.existsSync(outboxDir), 'outbox dir should exist');
+    const files = fs.readdirSync(outboxDir);
+    assert.ok(files.length > 0, 'outbox should have a file');
+    const msg = JSON.parse(fs.readFileSync(path.join(outboxDir, files[0]), 'utf8'));
+    assert.ok(msg.text.includes('Graph API down'));
   });
 
   test('trigger_audit error calls send with error message', async () => {

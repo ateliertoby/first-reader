@@ -135,6 +135,17 @@ export class TelegramChannel {
     return allowed;
   }
 
+  // Register BotFather menu commands. Non-fatal on failure.
+  async registerCommands() {
+    try {
+      await this._call('setMyCommands', {
+        commands: [{ command: 'check', description: '用 agent check email' }],
+      });
+    } catch (err) {
+      console.error(`registerCommands failed: ${err.message}`);
+    }
+  }
+
   // Send all outbox files in ts order. Stop on first failure.
   async drainOutbox(outboxDir) {
     if (!fs.existsSync(outboxDir)) return { sent: 0, remaining: 0 };

@@ -1,4 +1,4 @@
-// Agent daemon loop — B3/B4 (intent handling wired, B6 wires launchd)
+// Agent daemon loop — polls Telegram, runs sweep + idle trigger each iteration
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -6,42 +6,28 @@ import { fileURLToPath } from 'node:url';
 import { TelegramChannel } from './telegram.js';
 import { AgentDB } from './db.js';
 import { loadAgentConfig } from './config.js';
-import { runAgentReport } from './report.js';
+import { runAgentReport, writeOutbox } from './report.js';
 import { createHandler } from './handler.js';
 import { graphGet, graphPost } from '../graph.js';
 import { makeGitRunner } from './ops.js';
 import { runFolderAudit } from './audit.js';
 import { cleanQueue } from './cli-transport.js';
+import { runSweep } from './render-sweep.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULTS = {
   agentDbPath: path.join(__dirname, '..', '..', 'data', 'agent.db'),
   outboxDir: path.join(__dirname, '..', '..', 'data', 'agent-outbox'),
   stateFile: path.join(__dirname, '..', '..', 'data', 'telegram-state.json'),
+  queueDir: path.join(__dirname, '..', '..', 'data', 'llm-queue'),
+  notesPath: path.join(__dirname, '..', '..', 'config', 'agent-notes.md'),
+  lastReportPath: path.join(__dirname, '..', '..', 'data', 'agent-last-report.json'),
 };
 
 const PROJECT_ROOT = path.join(__dirname, '..', '..');
 
-// Pure — compute ms until next HH:MM in timezone from now
-export function msUntilNext(reportTime, timezone, now) {
-  const d = now instanceof Date ? now : new Date(now);
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hourCycle: 'h23',
-  });
-  const parts = {};
-  for (const { type, value } of fmt.formatToParts(d)) parts[type] = value;
-
-  const [targetH, targetM] = reportTime.split(':').map(Number);
-  const nowMins = Number(parts.hour) * 60 + Number(parts.minute);
-  const targetMins = targetH * 60 + targetM;
-
-  let diffMins = targetMins - nowMins;
-  if (diffMins <= 0) diffMins += 1440;
-
-  return (diffMins * 60 - Number(parts.second)) * 1000;
-}
+// Monthly audit anchor — constant, no longer tied to a configurable reportTime
+const AUDIT_TIME = '09:00';
 
 // Pure — compute ms until next 1st-of-month at HH:MM in timezone from now
 export function msUntilNextMonthly(reportTime, timezone, now) {
@@ -68,28 +54,30 @@ export function msUntilNextMonthly(reportTime, timezone, now) {
   // Otherwise: next month's 1st at the slot
   const year = Number(parts.year);
   const month = Number(parts.month); // 1-indexed
-  // Build a Date for the 1st of next month at the target time in the timezone
-  // by computing offset from now to that target wall-clock moment
-  let nextYear = year;
-  let nextMonth = month + 1;
-  if (nextMonth > 12) { nextMonth = 1; nextYear++; }
 
-  // Use Intl to find the UTC instant for "next month 1st at targetH:targetM" in tz
-  // Approach: step forward by days until we reach the 1st of next month in tz,
-  // then compute the exact offset. More robust: just compute the difference.
   const nowSec = Number(parts.second);
-  const nowTotalMins = (dayOfMonth - 1) * 1440 + nowMins;
 
   // Days in current month (in local tz)
-  // Create a date for the last day of current month
   const daysInMonth = new Date(year, month, 0).getDate();
   const daysUntilFirst = daysInMonth - dayOfMonth + 1;
 
-  // ms = days remaining until 1st + slot time offset
   const minsUntilMidnight1st = daysUntilFirst * 1440 - nowMins;
   const totalMs = ((minsUntilMidnight1st + targetMins) * 60 - nowSec) * 1000;
 
   return totalMs;
+}
+
+// Idle trigger — fire a report when Toby hasn't checked in a while
+export function shouldTriggerIdle(agentDb, now, idleHours) {
+  // Never fire while a render is already in flight
+  const openPendings = agentDb.openPendings();
+  if (openPendings.length > 0) return false;
+
+  const lastRun = agentDb.lastRun('report');
+  if (!lastRun) return true; // Bootstrap: first deploy, fire immediately
+
+  const hoursSince = (new Date(now).getTime() - new Date(lastRun.run_at).getTime()) / 3_600_000;
+  return hoursSince >= idleHours;
 }
 
 function loadOffset(stateFile) {
@@ -113,19 +101,22 @@ export async function runLoop({
   // Internal injection (underscore = testing)
   _channel, _agentDb,
   _agentDbPath, _outboxDir, _stateFile,
-  _reportTime, _timezone, _agentConfigPath,
+  _queueDir, _notesPath, _lastReportPath,
+  _timezone, _agentConfigPath,
   _maxPolls, _runReport, _runAudit, _getNow,
 } = {}) {
   const agentDbPath = _agentDbPath ?? DEFAULTS.agentDbPath;
   const outboxDir = _outboxDir ?? DEFAULTS.outboxDir;
   const stateFile = _stateFile ?? DEFAULTS.stateFile;
+  const queueDir = _queueDir ?? DEFAULTS.queueDir;
+  const notesPath = _notesPath ?? DEFAULTS.notesPath;
+  const lastReportPath = _lastReportPath ?? DEFAULTS.lastReportPath;
 
-  // Load config (shared for report schedule + handler)
+  // Load config
   let agentConfig;
   try { agentConfig = loadAgentConfig(_agentConfigPath); }
-  catch { agentConfig = { model: 'claude-sonnet-5', reportTime: '08:30', timezone: 'Asia/Hong_Kong' }; }
+  catch { agentConfig = { model: 'claude-sonnet-4-6', timezone: 'Asia/Hong_Kong', idleHours: 24, renderDeadlineHours: 8, freshLookbackHours: 12 }; }
 
-  let reportTime = _reportTime ?? agentConfig.reportTime;
   const tz = _timezone ?? agentConfig.timezone;
 
   const getNow = _getNow ?? (() => new Date().toISOString());
@@ -139,52 +130,68 @@ export async function runLoop({
     agentDb: db,
     model: agentConfig.model,
     rulesPath: path.join(PROJECT_ROOT, 'config', 'rules.json'),
-    notesPath: path.join(PROJECT_ROOT, 'config', 'agent-notes.md'),
+    notesPath,
     sortDbPath: path.join(PROJECT_ROOT, 'data', 'transactions.db'),
-    lastReportPath: path.join(PROJECT_ROOT, 'data', 'agent-last-report.json'),
+    lastReportPath,
     git: makeGitRunner(PROJECT_ROOT),
     graphGet, graphPost,
     runReport: reportFn,
     runAudit: auditFn,
     drainOutbox: () => channel.drainOutbox(outboxDir),
     send: (text) => channel.send(text),
+    outboxDir,
     getNow,
   });
 
   const offsetRef = loadOffset(stateFile);
 
-  // Startup queue cleanup — stale requests/results from prior crashes
-  cleanQueue(getNow());
+  // Production mode: sweep + idle trigger enabled, timers running.
+  // Test mode (_maxPolls set): skip sweep/idle/timers to keep tests fast and isolated.
+  const productionMode = _maxPolls == null;
+
+  // Startup queue cleanup — stale requests/results from prior crashes.
+  // Protect in-flight pending render request files.
+  const protectedIds = productionMode
+    ? db.openPendings().map(p => p.request_id)
+    : [];
+  cleanQueue(getNow(), queueDir, protectedIds);
+
+  // Register bot menu commands (non-fatal)
+  if (productionMode && channel.registerCommands) {
+    await channel.registerCommands();
+  }
+
+  // Sweep deps (reused every iteration)
+  const sweepDeps = {
+    agentDb: db,
+    outboxDir,
+    queueDir,
+    notesPath,
+    lastReportPath,
+    drainOutbox: () => channel.drainOutbox(outboxDir),
+    config: agentConfig,
+    getNow,
+  };
+
+  // Startup sweep — pick up orphan renders from prior process.  A sweep
+  // failure must not prevent the daemon from starting (KeepAlive would
+  // otherwise crash-loop on a persistent error).
+  if (productionMode) {
+    try {
+      await runSweep(sweepDeps);
+    } catch (err) {
+      console.error(`Startup sweep error: ${err.message}`);
+    }
+  }
 
   // Startup drain
   await channel.drainOutbox(outboxDir);
 
-  // "auto" (learned slot) is v1.5 — until then it must not silently disable
-  // the daily report; fall back to the fixed default.
-  if (reportTime === 'auto') reportTime = '08:30';
-
-  // Schedule report timer (skip in test mode to avoid timer leaks)
-  let reportTimer = null;
-  function scheduleReport() {
-    if (_maxPolls != null) return;
-    const ms = msUntilNext(reportTime, tz, new Date());
-    reportTimer = setTimeout(async () => {
-      try {
-        await reportFn({ dry: false });
-        await channel.drainOutbox(outboxDir);
-      } catch (err) {
-        console.error(`Scheduled report error: ${err.message}`);
-      }
-      scheduleReport();
-    }, ms);
-    reportTimer.unref();
-  }
-
   // Schedule monthly audit timer (skip in test mode to avoid timer leaks)
   let auditTimer = null;
   function scheduleAudit() {
-    if (_maxPolls != null) return;
-    const ms = msUntilNextMonthly(reportTime, tz, new Date());
+    if (!productionMode) return;
+    const ms = msUntilNextMonthly(AUDIT_TIME, tz, new Date());
     auditTimer = setTimeout(async () => {
       try {
         await auditFn({ dry: false });
@@ -201,14 +208,44 @@ export async function runLoop({
   const shutdown = () => { running = false; };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
-  scheduleReport();
   scheduleAudit();
+
+  const IDLE_ATTEMPT_THROTTLE_MS = 30 * 60_000;
+  let lastIdleAttemptMs = 0;
 
   let polls = 0;
   try {
     while (running) {
       if (_maxPolls != null && polls >= _maxPolls) break;
       polls++;
+
+      // Sweep pending renders + idle trigger (production only)
+      if (productionMode) {
+        try {
+          await runSweep(sweepDeps);
+        } catch (err) {
+          console.error(`Sweep error: ${err.message}`);
+        }
+
+        // Throttle idle attempts: success stops re-fires via agent_runs /
+        // pending rows, so this only paces the failure path — without it a
+        // failing assemble would push an error message every poll iteration.
+        const nowMs = new Date(getNow()).getTime();
+        if (nowMs - lastIdleAttemptMs >= IDLE_ATTEMPT_THROTTLE_MS
+            && shouldTriggerIdle(db, getNow(), agentConfig.idleHours)) {
+          lastIdleAttemptMs = nowMs;
+          try {
+            await reportFn({ dry: false, origin: 'idle' });
+            await channel.drainOutbox(outboxDir);
+          } catch (err) {
+            // Idle trigger must also produce feedback — zero silent path
+            try {
+              writeOutbox(outboxDir, `idle report 出唔到：${err.message}`, getNow());
+              await channel.drainOutbox(outboxDir);
+            } catch { /* best effort */ }
+          }
+        }
+      }
 
       let messages = [];
       try {
@@ -231,7 +268,6 @@ export async function runLoop({
       }
     }
   } finally {
-    if (reportTimer) clearTimeout(reportTimer);
     if (auditTimer) clearTimeout(auditTimer);
     process.off('SIGTERM', shutdown);
     process.off('SIGINT', shutdown);

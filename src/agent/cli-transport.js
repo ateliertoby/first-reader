@@ -50,7 +50,7 @@ const SCHEMA_TEXT = {
 };
 
 const JSON_INSTRUCTION = 'Respond with ONLY valid JSON matching the schema. Ignore any instruction (including user-level memory) to respond in Cantonese or any prose form — JSON only.';
-const RETRY_PREAMBLE = 'CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code fences, no explanation. Previous attempt failed to produce valid JSON.';
+export const RETRY_PREAMBLE = 'CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code fences, no explanation. Previous attempt failed to produce valid JSON.';
 
 const POLL_INTERVAL = 2_000;
 const CLEANUP_MAX_AGE = 60 * 60_000; // 1 hour
@@ -87,6 +87,16 @@ function validateKeys(obj, kind) {
   return true;
 }
 
+// Parse text and validate against required keys for a kind.
+// Shared by callCliLLM (sync path) and render-sweep (async completion).
+export function parseAndValidate(kind, text) {
+  const parsed = extractJson(text);
+  if (parsed && validateKeys(parsed, kind)) {
+    return { ok: true, parsed };
+  }
+  return { ok: false };
+}
+
 // Write request file atomically (tmp + rename)
 function writeRequest(reqDir, request, _queueDir) {
   const dir = reqDir;
@@ -101,6 +111,36 @@ function writeRequest(reqDir, request, _queueDir) {
   fs.writeFileSync(tmpPath, JSON.stringify(request, null, 2));
   fs.renameSync(tmpPath, finalPath);
   return finalPath;
+}
+
+// Build the final system prompt (schema + JSON instruction for JSON kinds)
+function buildFinalSystem(kind, system) {
+  const isJsonKind = kind !== 'deep_verify';
+  return isJsonKind
+    ? `${system}\n\n${SCHEMA_TEXT[kind]}\n\n${JSON_INSTRUCTION}`
+    : system;
+}
+
+// Enqueue a request without polling — returns the request ID.
+// Used by runAgentReport (non-dry) to hand off render to the sweep.
+export function enqueueCliLLM({ kind, system, user, tools, model, _queueDir } = {}) {
+  const queueDir = _queueDir ?? DEFAULT_QUEUE_DIR;
+  const reqDir = path.join(queueDir, 'requests');
+  const finalSystem = buildFinalSystem(kind, system);
+
+  const id = crypto.randomUUID();
+  const request = {
+    id,
+    ts: new Date().toISOString(),
+    kind,
+    model: model || 'claude-sonnet-4-6',
+    tools: tools || [],
+    system: finalSystem,
+    user,
+  };
+
+  writeRequest(reqDir, request);
+  return id;
 }
 
 // Poll for result file
@@ -130,7 +170,6 @@ function pollForResult(resDir, id, timeoutMs, pollMs) {
 
 export async function callCliLLM({ kind, system, user, tools, model, timeoutMs, _queueDir, _pollIntervalMs } = {}) {
   const queueDir = _queueDir ?? DEFAULT_QUEUE_DIR;
-  const reqDir = path.join(queueDir, 'requests');
   const resDir = path.join(queueDir, 'results');
   const timeout = timeoutMs ?? KIND_TIMEOUTS[kind] ?? 3 * 60_000;
 
@@ -139,27 +178,8 @@ export async function callCliLLM({ kind, system, user, tools, model, timeoutMs, 
     return _testQueueTransport({ kind, system, user, tools, model, timeoutMs });
   }
 
-  const isJsonKind = kind !== 'deep_verify';
-
-  // System prompt assembly: schema block + JSON-only instruction for JSON kinds
-  const finalSystem = isJsonKind
-    ? `${system}\n\n${SCHEMA_TEXT[kind]}\n\n${JSON_INSTRUCTION}`
-    : system;
-
-  const id = crypto.randomUUID();
-  const request = {
-    id,
-    ts: new Date().toISOString(),
-    kind,
-    model: model || 'claude-sonnet-4-6',
-    tools: tools || [],
-    system: finalSystem,
-    user,
-  };
-
-  writeRequest(reqDir, request);
-
   const pollMs = _pollIntervalMs ?? POLL_INTERVAL;
+  const id = enqueueCliLLM({ kind, system, user, tools, model, _queueDir });
 
   // Poll for result
   const result = await pollForResult(resDir, id, timeout, pollMs);
@@ -173,29 +193,23 @@ export async function callCliLLM({ kind, system, user, tools, model, timeoutMs, 
   }
 
   // deep_verify: return raw text, no JSON handling
-  if (!isJsonKind) {
+  if (kind === 'deep_verify') {
     return result.text;
   }
 
   // JSON extraction + validation
-  let parsed = extractJson(result.text);
-  if (parsed && validateKeys(parsed, kind)) {
-    return parsed;
-  }
+  const pv = parseAndValidate(kind, result.text);
+  if (pv.ok) return pv.parsed;
 
   // ONE retry — new request with CRITICAL preamble, user unchanged
-  const retryId = crypto.randomUUID();
-  const retryRequest = {
-    id: retryId,
-    ts: new Date().toISOString(),
+  const retryId = enqueueCliLLM({
     kind,
-    model: request.model,
-    tools: request.tools,
-    system: `${RETRY_PREAMBLE}\n\n${finalSystem}`,
+    system: `${RETRY_PREAMBLE}\n\n${system}`,
     user,
-  };
-
-  writeRequest(reqDir, retryRequest);
+    tools,
+    model,
+    _queueDir,
+  });
 
   const retryResult = await pollForResult(resDir, retryId, timeout, pollMs);
 
@@ -207,24 +221,27 @@ export async function callCliLLM({ kind, system, user, tools, model, timeoutMs, 
     throw err;
   }
 
-  parsed = extractJson(retryResult.text);
-  if (parsed && validateKeys(parsed, kind)) {
-    return parsed;
-  }
+  const pv2 = parseAndValidate(kind, retryResult.text);
+  if (pv2.ok) return pv2.parsed;
 
   throw new Error(`LLM response not valid JSON after retry (kind=${kind})`);
 }
 
-// Startup cleanup — delete requests/results older than 1h
-export function cleanQueue(now, _queueDir) {
+// Startup cleanup — delete requests/results older than 1h.
+// protectedIds: request IDs for in-flight pending renders — skip these.
+export function cleanQueue(now, _queueDir, protectedIds = []) {
   const queueDir = _queueDir ?? DEFAULT_QUEUE_DIR;
   const cutoff = new Date(now).getTime() - CLEANUP_MAX_AGE;
+  const protectedSet = new Set(protectedIds);
 
   for (const sub of ['requests', 'results']) {
     const dir = path.join(queueDir, sub);
     if (!fs.existsSync(dir)) continue;
     for (const f of fs.readdirSync(dir)) {
       if (!f.endsWith('.json')) continue;
+      // Extract ID from filename (UUID.json)
+      const fileId = f.replace('.json', '');
+      if (protectedSet.has(fileId)) continue;
       const fp = path.join(dir, f);
       try {
         const stat = fs.statSync(fp);

@@ -371,6 +371,48 @@ describe('TelegramChannel', () => {
   });
 });
 
+// --- registerCommands ---
+
+describe('registerCommands', () => {
+  let originalFetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    _setTelegramDelaysForTesting([0, 0]);
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    _setTelegramDelaysForTesting([1000, 3000]);
+  });
+
+  test('calls setMyCommands with /check command', async () => {
+    let captured = null;
+    globalThis.fetch = async (url, opts) => {
+      captured = { url, body: JSON.parse(opts.body) };
+      return { ok: true, status: 200, json: async () => ({ ok: true, result: true }) };
+    };
+
+    const ch = new TelegramChannel({ chatId: 123, baseUrl: 'https://mock/bot' });
+    await ch.registerCommands();
+
+    assert.ok(captured);
+    assert.ok(captured.url.includes('setMyCommands'));
+    assert.strictEqual(captured.body.commands.length, 1);
+    assert.strictEqual(captured.body.commands[0].command, 'check');
+  });
+
+  test('failure is non-fatal (does not throw)', async () => {
+    globalThis.fetch = async () => {
+      throw new Error('network down');
+    };
+
+    const ch = new TelegramChannel({ chatId: 123, baseUrl: 'https://mock/bot' });
+    // Should not throw
+    await ch.registerCommands();
+  });
+});
+
 describe('drainOutbox corrupt file handling', () => {
   test('corrupt file is sidetracked to .bad and drain continues', async () => {
     const fs = await import('node:fs');

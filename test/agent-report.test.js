@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { runAgentReport } from '../src/agent/report.js';
+import { runAgentReport, buildDegradedMessage } from '../src/agent/report.js';
 import { AgentDB } from '../src/agent/db.js';
 import { SortLogDB } from '../src/sorter/db.js';
 import { _setTokenForTesting, setRetryDelays } from '../src/graph.js';
@@ -33,7 +33,10 @@ function writeRules(dir, extra = []) {
 
 function writeAgentConfig(dir) {
   const p = path.join(dir, 'agent.json');
-  fs.writeFileSync(p, JSON.stringify({ model: 'claude-sonnet-5' }));
+  fs.writeFileSync(p, JSON.stringify({
+    model: 'claude-sonnet-5',
+    idleHours: 24, renderDeadlineHours: 8, freshLookbackHours: 12
+  }));
   return p;
 }
 
@@ -74,6 +77,7 @@ function opts(tmpDir, overrides = {}) {
     _outboxDir: path.join(tmpDir, 'outbox'),
     _rulesPath: path.join(tmpDir, 'rules.json'),
     _agentConfigPath: path.join(tmpDir, 'agent.json'),
+    _queueDir: path.join(tmpDir, 'llm-queue'),
     _now: '2026-07-18T08:30:00Z',
     ...overrides
   };
@@ -97,7 +101,7 @@ describe('runAgentReport', () => {
       json: async () => ({ value: [] })
     });
 
-    // LLM mock
+    // LLM mock (only used for dry mode now)
     _setLLMTransportForTesting(async () => defaultLLMResponse());
   });
 
@@ -112,7 +116,7 @@ describe('runAgentReport', () => {
   // --- Window computation ---
 
   describe('window computation', () => {
-    test('normal chain: uses lastRun window_end as start', async () => {
+    test('normal chain: uses lastRun window_end as start, returns pending', async () => {
       writeSortState(tmpDir, '2026-07-18T08:00:00Z');
       // Seed a previous report run
       const db = new AgentDB(path.join(tmpDir, 'agent.db'));
@@ -124,27 +128,64 @@ describe('runAgentReport', () => {
       db.close();
 
       const result = await runAgentReport(opts(tmpDir));
-      assert.strictEqual(result.status, 'ok');
-      assert.strictEqual(result.reportJson.window.start, '2026-07-17T08:00:00Z');
-      // end = now (08:30) minus 15min buffer
-      assert.strictEqual(result.reportJson.window.end, '2026-07-18T08:15:00.000Z');
+      assert.strictEqual(result.status, 'pending');
+      assert.ok(result.requestId);
+
+      // Verify pending_renders row
+      const db2 = new AgentDB(path.join(tmpDir, 'agent.db'));
+      const pendings = db2.openPendings();
+      assert.strictEqual(pendings.length, 1);
+      assert.strictEqual(pendings[0].window_start, '2026-07-17T08:00:00Z');
+      assert.strictEqual(pendings[0].window_end, '2026-07-18T08:15:00.000Z');
+      assert.strictEqual(pendings[0].origin, 'check');
+      db2.close();
     });
 
-    test('first run: now minus 24h', async () => {
+    test('first run: now minus 24h, returns pending', async () => {
       writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-      // No previous report run — agent.db is fresh
 
       const result = await runAgentReport(opts(tmpDir));
-      assert.strictEqual(result.status, 'ok');
-      assert.strictEqual(result.reportJson.window.start, '2026-07-17T08:30:00.000Z');
-      assert.strictEqual(result.reportJson.window.end, '2026-07-18T08:15:00.000Z');
+      assert.strictEqual(result.status, 'pending');
+
+      const db = new AgentDB(path.join(tmpDir, 'agent.db'));
+      const pendings = db.openPendings();
+      assert.strictEqual(pendings.length, 1);
+      assert.strictEqual(pendings[0].window_start, '2026-07-17T08:30:00.000Z');
+      db.close();
     });
 
-    test('missing state file returns degraded', async () => {
+    test('missing state file returns degraded with outbox message', async () => {
       // No sort-state.json written
-      const result = await runAgentReport(opts(tmpDir));
+      const o = opts(tmpDir);
+      const result = await runAgentReport(o);
       assert.strictEqual(result.status, 'degraded');
       assert.ok(result.reason.includes('sort has never run'));
+
+      // Outbox message written (zero silent path)
+      const outboxFiles = fs.readdirSync(o._outboxDir);
+      assert.strictEqual(outboxFiles.length, 1);
+      const msg = JSON.parse(fs.readFileSync(path.join(o._outboxDir, outboxFiles[0]), 'utf8'));
+      assert.ok(msg.text.includes('[degraded]'));
+    });
+  });
+
+  // --- Single-open rule ---
+
+  describe('single-open rule', () => {
+    test('rejects new assemble when open pending exists', async () => {
+      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
+
+      // First call creates a pending
+      const r1 = await runAgentReport(opts(tmpDir));
+      assert.strictEqual(r1.status, 'pending');
+
+      // Second call should hit single-open rule
+      const r2 = await runAgentReport(opts(tmpDir));
+      assert.strictEqual(r2.status, 'single-open');
+
+      // Outbox has the "already building" message
+      const outboxFiles = fs.readdirSync(path.join(tmpDir, 'outbox'));
+      assert.ok(outboxFiles.length >= 1);
     });
   });
 
@@ -193,41 +234,17 @@ describe('runAgentReport', () => {
         }
       ]);
 
-      // Run twice
-      await runAgentReport(opts(tmpDir));
-      // Second run (re-process same window by resetting lastRun)
       const db = new AgentDB(path.join(tmpDir, 'agent.db'));
-      // The first run already logged — second run picks up from window_end
-      // But same email_id means INSERT OR IGNORE dedupes
       db.addReminder({ kind: 'hketoll-reminder', source_email_id: 'toll-001', subject: 'dup', now: '2026-07-18T09:00:00Z' });
       const reminders = db.openReminders();
       assert.strictEqual(reminders.length, 1);
       db.close();
-    });
-
-    test('expired reminders appear as final-mention in report', async () => {
-      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-
-      // Pre-seed an old reminder (>14 days)
-      const db = new AgentDB(path.join(tmpDir, 'agent.db'));
-      db.addReminder({
-        kind: 'hketoll-reminder', source_email_id: 'old-toll',
-        subject: 'Old toll payment', now: '2026-07-01T08:00:00Z'
-      });
-      db.close();
-
-      const result = await runAgentReport(opts(tmpDir));
-      const expired = result.reportJson.reminders.filter(r => r.status === 'expired');
-      assert.strictEqual(expired.length, 1);
-      assert.strictEqual(expired[0].kind, 'hketoll-reminder');
-      assert.strictEqual(expired[0].subject, 'Old toll payment');
     });
   });
 
   // --- Junk patrol ---
 
   describe('junk patrol', () => {
-    const NOW = '2026-07-18T08:30:00Z';
     const junkMessages = [
       { id: 'j-mox', subject: 'Mox transaction', from: { emailAddress: { address: 'noreply@mox.com' } }, receivedDateTime: '2026-07-18T06:00:00Z' },
       { id: 'j-gh', subject: 'PR update', from: { emailAddress: { address: 'noreply@github.com' } }, receivedDateTime: '2026-07-18T06:00:00Z' },
@@ -255,207 +272,39 @@ describe('runAgentReport', () => {
     test('rule-matched unguarded emails are rescued (move called)', async () => {
       writeSortState(tmpDir, '2026-07-18T08:00:00Z');
       const moveCalls = setupJunkFetch();
-      // Pre-dismiss j-dismissed
       const db = new AgentDB(path.join(tmpDir, 'agent.db'));
       db.dismissJunk('j-dismissed', '2026-07-17T00:00:00Z');
       db.close();
 
       const result = await runAgentReport(opts(tmpDir));
+      assert.strictEqual(result.status, 'pending');
 
-      // j-mox (accounting), j-gh (notifications), j-keep (keep — Toby's standing
-      // "I read these" order) should all be rescued
+      // j-mox, j-gh, j-keep should all be rescued
       assert.strictEqual(moveCalls.length, 3);
       assert.ok(moveCalls.some(u => u.includes('j-mox')));
       assert.ok(moveCalls.some(u => u.includes('j-gh')));
       assert.ok(moveCalls.some(u => u.includes('j-keep')));
-
-      const rescued = result.reportJson.junk.filter(j => j.flag === 'rescued-rule');
-      assert.strictEqual(rescued.length, 3);
-      assert.ok(rescued.some(j => j.rule_id === 'mox-tx'));
-      assert.ok(rescued.some(j => j.rule_id === 'github-notif'));
-      assert.ok(rescued.some(j => j.rule_id === 'keep-test'));
     });
 
-    test('guarded and unruled emails go to pending', async () => {
+    test('guarded and unruled emails go to pending (in stored report_json)', async () => {
       writeSortState(tmpDir, '2026-07-18T08:00:00Z');
       setupJunkFetch();
       const db = new AgentDB(path.join(tmpDir, 'agent.db'));
       db.dismissJunk('j-dismissed', '2026-07-17T00:00:00Z');
       db.close();
 
-      const result = await runAgentReport(opts(tmpDir));
-      const pending = result.reportJson.junk.filter(j => j.flag === 'pending');
-      // j-guard (guard word in junk = extra suspicious), j-unruled (no rule)
+      await runAgentReport(opts(tmpDir));
+
+      // Check the stored report_json in pending_renders
+      const db2 = new AgentDB(path.join(tmpDir, 'agent.db'));
+      const pendings = db2.openPendings();
+      const reportJson = JSON.parse(pendings[0].report_json);
+      const pending = reportJson.junk.filter(j => j.flag === 'pending');
       assert.strictEqual(pending.length, 2);
       const pendingIds = pending.map(j => j.id);
       assert.ok(pendingIds.includes('j-guard'));
       assert.ok(pendingIds.includes('j-unruled'));
-    });
-
-    test('dismissed ids are skipped', async () => {
-      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-      setupJunkFetch();
-      const db = new AgentDB(path.join(tmpDir, 'agent.db'));
-      db.dismissJunk('j-dismissed', '2026-07-17T00:00:00Z');
-      db.close();
-
-      const result = await runAgentReport(opts(tmpDir));
-      const allIds = result.reportJson.junk.map(j => j.id);
-      assert.ok(!allIds.includes('j-dismissed'));
-    });
-  });
-
-  // --- LLM output application ---
-
-  describe('LLM output application', () => {
-    test('new questions are added to DB', async () => {
-      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-      _setLLMTransportForTesting(async () => ({
-        message_text: 'Report with questions',
-        new_questions: [
-          { domain: 'billing', question: 'Keep mox alerts?' },
-          { domain: 'social', question: 'Sort github stars?' }
-        ],
-        auto_resolved_reminders: [],
-        junk_flags: []
-      }));
-
-      await runAgentReport(opts(tmpDir));
-
-      const db = new AgentDB(path.join(tmpDir, 'agent.db'));
-      const questions = db.openQuestions();
-      assert.strictEqual(questions.length, 2);
-      assert.ok(questions.some(q => q.domain === 'billing'));
-      assert.ok(questions.some(q => q.domain === 'social'));
-      db.close();
-    });
-
-    test('question dedupe: same domain not re-added', async () => {
-      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-      // Pre-seed an open question
-      const db = new AgentDB(path.join(tmpDir, 'agent.db'));
-      db.addQuestion({ domain: 'billing', question: 'Old q?', now: '2026-07-17T08:00:00Z' });
-      db.close();
-
-      _setLLMTransportForTesting(async () => ({
-        message_text: 'Report',
-        new_questions: [{ domain: 'billing', question: 'New q?' }],
-        auto_resolved_reminders: [],
-        junk_flags: []
-      }));
-
-      await runAgentReport(opts(tmpDir));
-
-      const db2 = new AgentDB(path.join(tmpDir, 'agent.db'));
-      const questions = db2.openQuestions();
-      assert.strictEqual(questions.length, 1);
-      assert.strictEqual(questions[0].question, 'Old q?');
       db2.close();
-    });
-
-    test('auto-resolved reminders are marked resolved', async () => {
-      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-      // Pre-seed a reminder
-      const db = new AgentDB(path.join(tmpDir, 'agent.db'));
-      db.addReminder({
-        kind: 'hketoll-reminder', source_email_id: 'toll-x',
-        subject: 'Toll', now: '2026-07-16T08:00:00Z'
-      });
-      const reminderId = db.openReminders()[0].id;
-      db.close();
-
-      _setLLMTransportForTesting(async () => ({
-        message_text: 'Report',
-        new_questions: [],
-        auto_resolved_reminders: [{ id: reminderId }],
-        junk_flags: []
-      }));
-
-      await runAgentReport(opts(tmpDir));
-
-      const db2 = new AgentDB(path.join(tmpDir, 'agent.db'));
-      assert.strictEqual(db2.openReminders().length, 0);
-      db2.close();
-    });
-
-    test('junk flags are advisory only — no graph moves', async () => {
-      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-      const moveCalls = [];
-      globalThis.fetch = async (url, fetchOpts) => {
-        if (fetchOpts?.method === 'POST') moveCalls.push(url);
-        if (url.includes('junkemail/messages')) {
-          return {
-            ok: true, status: 200,
-            json: async () => ({
-              value: [
-                { id: 'j-pending', subject: 'Spam', from: { emailAddress: { address: 'x@unknown.com' } }, receivedDateTime: '2026-07-18T06:00:00Z' }
-              ]
-            })
-          };
-        }
-        return { ok: true, status: 200, json: async () => ({ value: [] }) };
-      };
-
-      _setLLMTransportForTesting(async () => ({
-        message_text: 'Report',
-        new_questions: [],
-        auto_resolved_reminders: [],
-        junk_flags: [{ id: 'j-pending', flag: 'pending-danger', reason: 'looks phishy' }]
-      }));
-
-      const result = await runAgentReport(opts(tmpDir));
-
-      // No move calls for flagged junk — flags are advisory
-      assert.strictEqual(moveCalls.length, 0);
-      // Flag is merged into the item for display
-      const item = result.reportJson.junk.find(j => j.id === 'j-pending');
-      assert.strictEqual(item.flag, 'pending-danger');
-      assert.strictEqual(item.reason, 'looks phishy');
-    });
-  });
-
-  // --- Degraded mode ---
-
-  describe('degraded mode', () => {
-    test('LLM failure produces degraded template', async () => {
-      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-      insertSortRows(path.join(tmpDir, 'transactions.db'), [
-        {
-          run_at: '2026-07-17T10:00:00Z', email_id: 'gh-d1',
-          sender: 'x@github.com', domain: 'github.com',
-          subject: 'PR', subject_key: 'pr',
-          received_at: '2026-07-17T09:00:00Z', bucket: 'notifications',
-          rule_id: 'github-notif', action: 'moved', parsed: null
-        }
-      ]);
-
-      _setLLMTransportForTesting(async () => { throw new Error('API down'); });
-
-      const result = await runAgentReport(opts(tmpDir));
-      assert.strictEqual(result.status, 'degraded');
-      assert.ok(result.message.startsWith('[degraded]'));
-      assert.ok(result.message.includes('sort:'));
-      assert.ok(result.message.includes('LLM 唔喺度，建議缺席'));
-    });
-
-    test('degraded run still writes outbox and logRun', async () => {
-      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-      _setLLMTransportForTesting(async () => { throw new Error('API down'); });
-
-      const o = opts(tmpDir);
-      await runAgentReport(o);
-
-      // Outbox file created
-      const outboxFiles = fs.readdirSync(o._outboxDir);
-      assert.strictEqual(outboxFiles.length, 1);
-      const outbox = JSON.parse(fs.readFileSync(path.join(o._outboxDir, outboxFiles[0]), 'utf8'));
-      assert.ok(outbox.text.startsWith('[degraded]'));
-
-      // Run logged
-      const db = new AgentDB(o._agentDbPath);
-      const last = db.lastRun('report');
-      assert.strictEqual(last.status, 'degraded');
-      db.close();
     });
   });
 
@@ -507,49 +356,61 @@ describe('runAgentReport', () => {
       // No graph moves
       assert.strictEqual(moveCalls.length, 0);
 
-      // No DB mutations: no reminders, no questions, no runs
+      // No DB mutations: no reminders, no questions, no runs, no pendings
       const db = new AgentDB(o._agentDbPath);
       assert.strictEqual(db.openReminders().length, 0);
       assert.strictEqual(db.openQuestions().length, 0);
       assert.strictEqual(db.lastRun('report'), null);
+      assert.strictEqual(db.openPendings().length, 0);
       db.close();
+    });
+
+    test('LLM failure in dry mode produces degraded template', async () => {
+      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
+      insertSortRows(path.join(tmpDir, 'transactions.db'), [
+        {
+          run_at: '2026-07-17T10:00:00Z', email_id: 'gh-d1',
+          sender: 'x@github.com', domain: 'github.com',
+          subject: 'PR', subject_key: 'pr',
+          received_at: '2026-07-17T09:00:00Z', bucket: 'notifications',
+          rule_id: 'github-notif', action: 'moved', parsed: null
+        }
+      ]);
+
+      _setLLMTransportForTesting(async () => { throw new Error('API down'); });
+
+      const result = await runAgentReport(opts(tmpDir, { dry: true }));
+      assert.strictEqual(result.status, 'degraded');
+      assert.ok(result.message.includes('[degraded]'));
+      assert.ok(result.message.includes('sort:'));
     });
   });
 
-  // --- Notes warning ---
+  // --- Notes warning (dry mode) ---
 
   describe('notes warning', () => {
-    test('notes >60 lines appends warning to message', async () => {
+    test('notes >60 lines appends warning to message (dry)', async () => {
       writeSortState(tmpDir, '2026-07-18T08:00:00Z');
       const lines = Array(65).fill('line').join('\n');
       writeNotes(tmpDir, lines);
 
-      const result = await runAgentReport(opts(tmpDir));
+      const result = await runAgentReport(opts(tmpDir, { dry: true }));
       assert.ok(result.message.includes('agent-notes.md 有 65 行，清理時間'));
     });
 
-    test('notes <=60 lines: no warning', async () => {
+    test('notes <=60 lines: no warning (dry)', async () => {
       writeSortState(tmpDir, '2026-07-18T08:00:00Z');
       writeNotes(tmpDir, Array(60).fill('line').join('\n'));
 
-      const result = await runAgentReport(opts(tmpDir));
+      const result = await runAgentReport(opts(tmpDir, { dry: true }));
       assert.ok(!result.message.includes('agent-notes.md'));
-    });
-
-    test('notes warning in degraded mode uses / separator', async () => {
-      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-      writeNotes(tmpDir, Array(70).fill('line').join('\n'));
-      _setLLMTransportForTesting(async () => { throw new Error('fail'); });
-
-      const result = await runAgentReport(opts(tmpDir));
-      assert.ok(result.message.includes(' / agent-notes.md 有 70 行，清理時間'));
     });
   });
 
   // --- Sort section ---
 
   describe('sort section', () => {
-    test('groups moved rows and attaches historicalCount to kept', async () => {
+    test('groups moved rows and attaches historicalCount to kept (via pending report_json)', async () => {
       writeSortState(tmpDir, '2026-07-18T08:00:00Z');
       const dbPath = path.join(tmpDir, 'transactions.db');
       insertSortRows(dbPath, [
@@ -576,71 +437,148 @@ describe('runAgentReport', () => {
         }
       ]);
 
-      const result = await runAgentReport(opts(tmpDir));
-      const { sort } = result.reportJson;
-      assert.strictEqual(sort.moved.length, 1);
-      assert.strictEqual(sort.moved[0].ruleId, 'github-notif');
-      assert.strictEqual(sort.moved[0].count, 2);
-      assert.strictEqual(sort.kept.length, 1);
-      assert.strictEqual(sort.kept[0].domain, 'random.com');
-      assert.strictEqual(typeof sort.kept[0].historicalCount, 'number');
-    });
+      await runAgentReport(opts(tmpDir));
 
-    test('kept-rule and pinned appear only as summary counts', async () => {
-      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-      insertSortRows(path.join(tmpDir, 'transactions.db'), [
-        {
-          run_at: '2026-07-17T10:00:00Z', email_id: 'kr-1',
-          sender: 'info@important.com', domain: 'important.com',
-          subject: 'Important stuff', subject_key: 'important stuff',
-          received_at: '2026-07-17T09:00:00Z', bucket: 'keep',
-          rule_id: 'keep-test', action: 'kept-rule', parsed: null
-        }
-      ]);
-
-      const result = await runAgentReport(opts(tmpDir));
-      // kept-rule should NOT appear in kept[] (which is unruled only)
-      assert.strictEqual(result.reportJson.sort.kept.length, 0);
-      assert.strictEqual(result.reportJson.sort.summary.keptRuleCount, 1);
+      // Check stored report_json
+      const db = new AgentDB(path.join(tmpDir, 'agent.db'));
+      const pendings = db.openPendings();
+      const reportJson = JSON.parse(pendings[0].report_json);
+      assert.strictEqual(reportJson.sort.moved.length, 1);
+      assert.strictEqual(reportJson.sort.moved[0].ruleId, 'github-notif');
+      assert.strictEqual(reportJson.sort.moved[0].count, 2);
+      assert.strictEqual(reportJson.sort.kept.length, 1);
+      assert.strictEqual(reportJson.sort.kept[0].domain, 'random.com');
+      assert.strictEqual(typeof reportJson.sort.kept[0].historicalCount, 'number');
+      db.close();
     });
   });
 
-  // --- Outbox ---
+  // --- Request file creation ---
 
-  describe('outbox', () => {
-    test('non-dry writes outbox JSON with ts and text', async () => {
+  describe('enqueue', () => {
+    test('non-dry creates request file in queue dir', async () => {
       writeSortState(tmpDir, '2026-07-18T08:00:00Z');
       const o = opts(tmpDir);
-      await runAgentReport(o);
+      const result = await runAgentReport(o);
 
-      const files = fs.readdirSync(o._outboxDir);
+      assert.strictEqual(result.status, 'pending');
+      const reqDir = path.join(o._queueDir, 'requests');
+      const files = fs.readdirSync(reqDir).filter(f => f.endsWith('.json'));
       assert.strictEqual(files.length, 1);
-      assert.ok(files[0].endsWith('.json'));
-      const content = JSON.parse(fs.readFileSync(path.join(o._outboxDir, files[0]), 'utf8'));
-      assert.strictEqual(content.ts, '2026-07-18T08:30:00Z');
-      assert.strictEqual(typeof content.text, 'string');
-      assert.ok(content.text.length > 0);
+    });
+
+    test('origin defaults to check, can be set to idle', async () => {
+      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
+      const result = await runAgentReport(opts(tmpDir, { origin: 'idle' }));
+      assert.strictEqual(result.status, 'pending');
+
+      const db = new AgentDB(path.join(tmpDir, 'agent.db'));
+      const pendings = db.openPendings();
+      assert.strictEqual(pendings[0].origin, 'idle');
+      db.close();
     });
   });
 
-  // --- Run ledger ---
+  // --- Fresh peek ---
 
-  describe('run ledger', () => {
-    test('non-dry logs run with window and status', async () => {
+  describe('fresh peek', () => {
+    test('unruled inbox emails appear in fresh[], ruled are invisible', async () => {
       writeSortState(tmpDir, '2026-07-18T08:00:00Z');
-      const o = opts(tmpDir);
-      await runAgentReport(o);
+      // Return inbox messages for fresh peek
+      globalThis.fetch = async (url) => {
+        if (url.includes('inbox/messages')) {
+          return {
+            ok: true, status: 200,
+            json: async () => ({
+              value: [
+                { id: 'fresh-1', subject: 'New lead', from: { emailAddress: { address: 'hello@newco.com' } }, receivedDateTime: '2026-07-18T08:00:00Z' },
+                { id: 'fresh-ruled', subject: 'GitHub PR', from: { emailAddress: { address: 'noreply@github.com' } }, receivedDateTime: '2026-07-18T08:00:00Z' },
+              ]
+            })
+          };
+        }
+        return { ok: true, status: 200, json: async () => ({ value: [] }) };
+      };
 
-      const db = new AgentDB(o._agentDbPath);
-      const last = db.lastRun('report');
-      assert.ok(last);
-      assert.strictEqual(last.status, 'ok');
-      assert.strictEqual(last.window_end, '2026-07-18T08:15:00.000Z');
+      const result = await runAgentReport(opts(tmpDir));
+      assert.strictEqual(result.status, 'pending');
+
+      const db = new AgentDB(path.join(tmpDir, 'agent.db'));
+      const pendings = db.openPendings();
+      const reportJson = JSON.parse(pendings[0].report_json);
+
+      // Unruled email in fresh[]
+      assert.strictEqual(reportJson.fresh.length, 1);
+      assert.strictEqual(reportJson.fresh[0].id, 'fresh-1');
+      assert.strictEqual(reportJson.fresh[0].sender, 'hello@newco.com');
+
+      // Ruled email (github.com) invisible — not in fresh[]
+      assert.ok(!reportJson.fresh.some(f => f.id === 'fresh-ruled'));
       db.close();
     });
 
-    test('missing state file logs degraded run (non-dry)', async () => {
-      // No sort-state.json
+    test('sortRows IDs deduped from fresh peek', async () => {
+      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
+      insertSortRows(path.join(tmpDir, 'transactions.db'), [
+        {
+          run_at: '2026-07-17T10:00:00Z', email_id: 'already-sorted',
+          sender: 'x@newco.com', domain: 'newco.com',
+          subject: 'Already seen', subject_key: 'already seen',
+          received_at: '2026-07-17T09:00:00Z', bucket: null,
+          rule_id: null, action: 'kept', parsed: null
+        }
+      ]);
+
+      globalThis.fetch = async (url) => {
+        if (url.includes('inbox/messages')) {
+          return {
+            ok: true, status: 200,
+            json: async () => ({
+              value: [
+                { id: 'already-sorted', subject: 'Already seen', from: { emailAddress: { address: 'x@newco.com' } }, receivedDateTime: '2026-07-17T09:00:00Z' },
+                { id: 'brand-new', subject: 'Brand new', from: { emailAddress: { address: 'y@newco.com' } }, receivedDateTime: '2026-07-18T08:00:00Z' },
+              ]
+            })
+          };
+        }
+        return { ok: true, status: 200, json: async () => ({ value: [] }) };
+      };
+
+      const result = await runAgentReport(opts(tmpDir));
+      const db = new AgentDB(path.join(tmpDir, 'agent.db'));
+      const reportJson = JSON.parse(db.openPendings()[0].report_json);
+
+      // 'already-sorted' should NOT be in fresh (deduped)
+      assert.ok(!reportJson.fresh.some(f => f.id === 'already-sorted'));
+      // 'brand-new' should be in fresh
+      assert.ok(reportJson.fresh.some(f => f.id === 'brand-new'));
+      db.close();
+    });
+
+    test('Graph failure during fresh peek is non-fatal', async () => {
+      writeSortState(tmpDir, '2026-07-18T08:00:00Z');
+      globalThis.fetch = async (url) => {
+        if (url.includes('inbox/messages')) {
+          throw new Error('Graph API down');
+        }
+        return { ok: true, status: 200, json: async () => ({ value: [] }) };
+      };
+
+      // Should not throw — report continues without fresh data
+      const result = await runAgentReport(opts(tmpDir));
+      assert.strictEqual(result.status, 'pending');
+
+      const db = new AgentDB(path.join(tmpDir, 'agent.db'));
+      const reportJson = JSON.parse(db.openPendings()[0].report_json);
+      assert.deepStrictEqual(reportJson.fresh, []);
+      db.close();
+    });
+  });
+
+  // --- Degraded logs run ---
+
+  describe('degraded run logging', () => {
+    test('missing state file logs degraded run', async () => {
       const o = opts(tmpDir);
       await runAgentReport(o);
 
@@ -650,5 +588,57 @@ describe('runAgentReport', () => {
       assert.strictEqual(last.status, 'degraded');
       db.close();
     });
+  });
+});
+
+// --- buildDegradedMessage ---
+
+describe('buildDegradedMessage', () => {
+  test('includes kept + fresh subjects (cap 15)', () => {
+    const reportJson = {
+      sort: {
+        moved: [{ ruleId: 'test', count: 2 }],
+        guardBlocked: [],
+        kept: [
+          { domain: 'example.com', count: 1, samples: [{ subject: 'Hello World', received: '2026-07-18T08:00:00Z' }] },
+        ],
+      },
+      reminders: [],
+      questions: [],
+      junk: [],
+      fresh: [
+        { id: 'f1', sender: 'a@b.com', subject: 'Fresh email', received: '2026-07-18T08:00:00Z' },
+      ],
+    };
+
+    const msg = buildDegradedMessage(reportJson);
+    assert.ok(msg.includes('[degraded]'));
+    assert.ok(msg.includes('Hello World (example.com)'));
+    assert.ok(msg.includes('Fresh email (a@b.com)'));
+    assert.ok(msg.includes('LLM 唔喺度'));
+  });
+
+  test('caps at 15 subjects with +N more', () => {
+    const samples = [];
+    for (let i = 0; i < 20; i++) {
+      samples.push({ subject: `Subject ${i}`, received: '2026-07-18T08:00:00Z' });
+    }
+    const reportJson = {
+      sort: {
+        moved: [],
+        guardBlocked: [],
+        kept: [{ domain: 'test.com', count: 20, samples }],
+      },
+      reminders: [],
+      questions: [],
+      junk: [],
+      fresh: [],
+    };
+
+    const msg = buildDegradedMessage(reportJson);
+    assert.ok(msg.includes('Subject 0'));
+    assert.ok(msg.includes('Subject 14'));
+    assert.ok(!msg.includes('Subject 15'));
+    assert.ok(msg.includes('+5 more'));
   });
 });

@@ -384,6 +384,32 @@ describe('executeOps', () => {
     assert.ok(drainCalled);
   });
 
+  test('trigger_report: background error writes to outbox', async () => {
+    const outboxDir = path.join(tmpDir, 'outbox');
+    let drainCalled = false;
+    const deps = makeDeps(tmpDir, {
+      runReport: async () => { throw new Error('assemble failed'); },
+      drainOutbox: async () => { drainCalled = true; },
+    });
+    deps.outboxDir = outboxDir;
+
+    const results = await executeOps([{ type: 'trigger_report' }], deps);
+    closeDeps(deps);
+
+    assert.ok(results[0].includes('收到'));
+    // Wait for background error handler
+    await new Promise(r => setTimeout(r, 50));
+
+    // Error message should be in outbox
+    assert.ok(fs.existsSync(outboxDir));
+    const files = fs.readdirSync(outboxDir);
+    assert.ok(files.length > 0);
+    const msg = JSON.parse(fs.readFileSync(path.join(outboxDir, files[0]), 'utf8'));
+    assert.ok(msg.text.includes('report 出唔到'));
+    assert.ok(msg.text.includes('assemble failed'));
+    assert.ok(drainCalled);
+  });
+
   test('trigger_audit: returns ack immediately, fires audit in background', async () => {
     let auditCalled = false;
     let drainCalled = false;

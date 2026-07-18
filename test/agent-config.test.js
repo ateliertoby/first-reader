@@ -23,22 +23,29 @@ describe('loadAgentConfig', () => {
   });
 
   test('loads valid config with all fields', () => {
-    const p = writeConfig({ model: 'claude-sonnet-5', reportTime: '08:30', timezone: 'Asia/Hong_Kong' });
+    const p = writeConfig({
+      model: 'claude-sonnet-5', timezone: 'Asia/Hong_Kong',
+      idleHours: 12, renderDeadlineHours: 4, freshLookbackHours: 6
+    });
     const cfg = loadAgentConfig(p);
     assert.strictEqual(cfg.model, 'claude-sonnet-5');
-    assert.strictEqual(cfg.reportTime, '08:30');
     assert.strictEqual(cfg.timezone, 'Asia/Hong_Kong');
+    assert.strictEqual(cfg.idleHours, 12);
+    assert.strictEqual(cfg.renderDeadlineHours, 4);
+    assert.strictEqual(cfg.freshLookbackHours, 6);
   });
 
   test('applies defaults for missing optional fields', () => {
     const p = writeConfig({ model: 'claude-sonnet-5' });
     const cfg = loadAgentConfig(p);
-    assert.strictEqual(cfg.reportTime, '08:30');
     assert.strictEqual(cfg.timezone, 'Asia/Hong_Kong');
+    assert.strictEqual(cfg.idleHours, 24);
+    assert.strictEqual(cfg.renderDeadlineHours, 8);
+    assert.strictEqual(cfg.freshLookbackHours, 12);
   });
 
   test('throws on missing model', () => {
-    const p = writeConfig({ reportTime: '09:00' });
+    const p = writeConfig({ timezone: 'UTC' });
     assert.throws(() => loadAgentConfig(p), { message: /model is required/ });
   });
 
@@ -50,40 +57,6 @@ describe('loadAgentConfig', () => {
   test('throws on non-string model', () => {
     const p = writeConfig({ model: 42 });
     assert.throws(() => loadAgentConfig(p), { message: /model is required/ });
-  });
-
-  test('accepts reportTime "auto"', () => {
-    const p = writeConfig({ model: 'claude-sonnet-5', reportTime: 'auto' });
-    const cfg = loadAgentConfig(p);
-    assert.strictEqual(cfg.reportTime, 'auto');
-  });
-
-  test('accepts valid 24h reportTime values', () => {
-    for (const t of ['00:00', '08:30', '13:45', '23:59']) {
-      const p = writeConfig({ model: 'claude-sonnet-5', reportTime: t });
-      const cfg = loadAgentConfig(p);
-      assert.strictEqual(cfg.reportTime, t);
-    }
-  });
-
-  test('throws on invalid reportTime format', () => {
-    const p = writeConfig({ model: 'claude-sonnet-5', reportTime: '8:30' });
-    assert.throws(() => loadAgentConfig(p), { message: /reportTime/ });
-  });
-
-  test('throws on reportTime = 25:00', () => {
-    const p = writeConfig({ model: 'claude-sonnet-5', reportTime: '25:00' });
-    assert.throws(() => loadAgentConfig(p), { message: /reportTime/ });
-  });
-
-  test('throws on reportTime = 12:60', () => {
-    const p = writeConfig({ model: 'claude-sonnet-5', reportTime: '12:60' });
-    assert.throws(() => loadAgentConfig(p), { message: /reportTime/ });
-  });
-
-  test('throws on numeric reportTime', () => {
-    const p = writeConfig({ model: 'claude-sonnet-5', reportTime: 830 });
-    assert.throws(() => loadAgentConfig(p), { message: /reportTime/ });
   });
 
   test('throws on empty timezone', () => {
@@ -101,9 +74,32 @@ describe('loadAgentConfig', () => {
     assert.throws(() => loadAgentConfig(p), { message: /timezone/ });
   });
 
+  test('non-positive idleHours falls back to default 24', () => {
+    const p = writeConfig({ model: 'claude-sonnet-5', idleHours: 0 });
+    assert.strictEqual(loadAgentConfig(p).idleHours, 24);
+  });
+
+  test('non-positive renderDeadlineHours falls back to default 8', () => {
+    const p = writeConfig({ model: 'claude-sonnet-5', renderDeadlineHours: -1 });
+    assert.strictEqual(loadAgentConfig(p).renderDeadlineHours, 8);
+  });
+
+  test('non-positive freshLookbackHours falls back to default 12', () => {
+    const p = writeConfig({ model: 'claude-sonnet-5', freshLookbackHours: 0 });
+    assert.strictEqual(loadAgentConfig(p).freshLookbackHours, 12);
+  });
+
+  test('non-number idleHours falls back to default', () => {
+    const p = writeConfig({ model: 'claude-sonnet-5', idleHours: 'auto' });
+    assert.strictEqual(loadAgentConfig(p).idleHours, 24);
+  });
+
   test('loads the real config/agent.json via default path', () => {
     const cfg = loadAgentConfig();
     assert.strictEqual(cfg.model, 'claude-sonnet-4-6');
+    assert.strictEqual(cfg.idleHours, 24);
+    assert.strictEqual(cfg.renderDeadlineHours, 8);
+    assert.strictEqual(cfg.freshLookbackHours, 12);
   });
 });
 

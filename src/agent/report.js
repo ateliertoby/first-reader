@@ -1,4 +1,6 @@
-// Agent daily report pipeline — B2 of the agent loop
+// Agent report pipeline — assemble phase (non-dry returns immediately, LLM
+// render is async via pending_renders + sweep).  Dry mode keeps the synchronous
+// callCliLLM path for shell use.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,7 +11,8 @@ import { loadRules, classify } from '../sorter/rules.js';
 import { SortLogDB } from '../sorter/db.js';
 import { groupMoved, groupKept, markNovelty } from '../commands/report.js';
 import { graphGet, graphPost, buildGraphUrl } from '../graph.js';
-import { renderReport } from './llm.js';
+import { renderReport, buildRenderPrompt } from './llm.js';
+import { enqueueCliLLM } from './cli-transport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULTS = {
@@ -32,6 +35,16 @@ function loadNotes(p) {
 
 function ageDays(isoDate, now) {
   return Math.floor((new Date(now) - new Date(isoDate)) / 86_400_000);
+}
+
+// Write a single outbox message file.  Shared with render-sweep.
+export function writeOutbox(outboxDir, text, now) {
+  if (!fs.existsSync(outboxDir)) fs.mkdirSync(outboxDir, { recursive: true });
+  const safeTs = now.replace(/[:.]/g, '-');
+  fs.writeFileSync(
+    path.join(outboxDir, `${safeTs}.json`),
+    JSON.stringify({ ts: now, text }, null, 2)
+  );
 }
 
 // Window is wall-clock over sort_log run_at — the log only ever contains what
@@ -74,39 +87,61 @@ async function fetchJunkMessages(windowStart) {
   return messages;
 }
 
-function buildDegradedMessage(reportJson) {
-  const parts = ['[degraded]'];
+export function buildDegradedMessage(reportJson) {
+  const summaryParts = ['[degraded]'];
   const { sort } = reportJson;
   if (sort.moved.length > 0) {
     const total = sort.moved.reduce((s, g) => s + g.count, 0);
     const items = sort.moved.map(g => `${g.ruleId} ${g.count}`).join(', ');
-    parts.push(`sort: ${total} moved (${items})`);
+    summaryParts.push(`sort: ${total} moved (${items})`);
   } else {
-    parts.push('sort: 0 moved');
+    summaryParts.push('sort: 0 moved');
   }
   if (sort.guardBlocked.length > 0) {
-    parts.push(`${sort.guardBlocked.length} guard-blocked`);
+    summaryParts.push(`${sort.guardBlocked.length} guard-blocked`);
   }
 
   const openR = reportJson.reminders.filter(r => r.status === 'open');
   if (openR.length > 0) {
-    parts.push('reminders: ' + openR.map(r => `${r.kind} ${r.age_days}日`).join(', '));
+    summaryParts.push('reminders: ' + openR.map(r => `${r.kind} ${r.age_days}日`).join(', '));
   }
 
   const pending = reportJson.junk.filter(j => j.flag !== 'rescued-rule');
-  if (pending.length > 0) parts.push(`junk: ${pending.length} pending`);
+  if (pending.length > 0) summaryParts.push(`junk: ${pending.length} pending`);
   const rescued = reportJson.junk.filter(j => j.flag === 'rescued-rule');
-  if (rescued.length > 0) parts.push(`junk rescued: ${rescued.length}`);
-  if (reportJson.questions.length > 0) parts.push(`questions: ${reportJson.questions.length} open`);
-  parts.push('LLM 唔喺度，建議缺席');
-  return parts.join(' / ');
+  if (rescued.length > 0) summaryParts.push(`junk rescued: ${rescued.length}`);
+  if (reportJson.questions.length > 0) summaryParts.push(`questions: ${reportJson.questions.length} open`);
+
+  const sections = [summaryParts.join(' / ')];
+
+  // Deterministic subject list — best output when LLM is unavailable
+  const subjectLines = [];
+  for (const g of (sort.kept || [])) {
+    for (const s of g.samples) {
+      subjectLines.push(`${s.subject} (${g.domain})`);
+    }
+  }
+  for (const f of (reportJson.fresh || [])) {
+    subjectLines.push(`${f.subject} (${f.sender})`);
+  }
+  if (subjectLines.length > 0) {
+    const cap = 15;
+    const shown = subjectLines.slice(0, cap);
+    let block = shown.join('\n');
+    if (subjectLines.length > cap) block += `\n+${subjectLines.length - cap} more`;
+    sections.push(block);
+  }
+
+  sections.push('LLM 唔喺度');
+  return sections.join('\n\n');
 }
 
 export async function runAgentReport({
   dry = false,
+  origin = 'check',
   // Test injection points (underscore = internal)
   _agentDbPath, _sortDbPath, _statePath, _notesPath,
-  _outboxDir, _rulesPath, _agentConfigPath, _now
+  _outboxDir, _rulesPath, _agentConfigPath, _queueDir, _now
 } = {}) {
   const now = _now ?? new Date().toISOString();
   const statePath = _statePath ?? DEFAULTS.statePath;
@@ -119,12 +154,22 @@ export async function runAgentReport({
   const agentDb = new AgentDB(agentDbPath);
 
   try {
+    // Single-open rule — only one render may be in flight at a time
+    if (!dry) {
+      const openPendings = agentDb.openPendings();
+      if (openPendings.length > 0) {
+        writeOutbox(outboxDir, '上一份報告整緊中，就嚟到', now);
+        return { status: 'single-open' };
+      }
+    }
+
     const win = computeWindow(agentDb, sortState, now);
 
     if (win.degraded) {
       if (dry) {
         console.log(`Degraded: ${win.reason}`);
       } else {
+        writeOutbox(outboxDir, `[degraded] ${win.reason}`, now);
         agentDb.logRun({
           run_at: now, kind: 'report',
           window_start: null, window_end: null,
@@ -250,10 +295,56 @@ export async function runAgentReport({
       for (const line of dryRescueLog) console.log(line);
     }
 
+    // --- Fresh peek — recent inbox emails not yet covered by sort window ---
+    const freshItems = [];
+    try {
+      const agentConfig = loadAgentConfig(_agentConfigPath);
+      const freshLookback = agentConfig.freshLookbackHours || 12;
+      const freshSince = new Date(new Date(now).getTime() - freshLookback * 3_600_000).toISOString();
+
+      const params = {
+        top: 100,
+        orderby: 'receivedDateTime desc',
+        select: 'id,subject,from,receivedDateTime',
+        filter: `receivedDateTime ge ${freshSince}`
+      };
+      const url = buildGraphUrl('/me/mailFolders/inbox/messages', params);
+      let inboxResult = await graphGet(url);
+      let inboxMessages = [...inboxResult.value];
+      while (inboxResult['@odata.nextLink']) {
+        inboxResult = await graphGet(inboxResult['@odata.nextLink']);
+        inboxMessages.push(...inboxResult.value);
+      }
+
+      const sortRowIds = new Set(sortRows.map(r => r.email_id));
+
+      for (const msg of inboxMessages) {
+        if (sortRowIds.has(msg.id)) continue;
+
+        const sender = msg.from?.emailAddress?.address || '';
+        const subject = msg.subject || '';
+        const cr = classify(sender, subject, config);
+
+        // Ruled (any bucket, guarded or not) — completely invisible
+        if (cr.bucket) continue;
+
+        freshItems.push({
+          id: msg.id,
+          sender,
+          domain: sender.toLowerCase().split('@').pop() || '',
+          subject,
+          received: msg.receivedDateTime || ''
+        });
+      }
+    } catch (err) {
+      // Graph fetch failure non-fatal — report proceeds without fresh data
+      console.error(`Fresh peek error: ${err.message}`);
+    }
+
     // --- Body fetch (recon-grade: report shows WHAT emails say, not just THAT they exist) ---
     // Targets: kept (unruled, inbox ids — valid), noparse (post-move ids — valid in Accounting),
-    // junk pending items. Cap: 25 bodies total, newest first. Fetch failures per-item are non-fatal.
-    // Dry mode fetches too (read-only — no writes).
+    // junk pending items, fresh items. Cap: 25 bodies total, newest first.
+    // Fetch failures per-item are non-fatal. Dry mode fetches too (read-only — no writes).
     const BODY_CAP = 25;
     const bodyTargets = [];
 
@@ -270,6 +361,12 @@ export async function runAgentReport({
     for (const item of junkItems) {
       if (item.flag !== 'rescued-rule' && item.id) {
         bodyTargets.push({ id: item.id, received: item.received, source: 'junk', ref: item });
+      }
+    }
+    // fresh items
+    for (const item of freshItems) {
+      if (item.id) {
+        bodyTargets.push({ id: item.id, received: item.received, source: 'fresh', ref: item });
       }
     }
     // Sort newest first, then cap
@@ -322,14 +419,13 @@ export async function runAgentReport({
     }
 
     // --- Report JSON ---
-    // Contract: body_excerpt (string, optional) on kept samples, noparse rows, junk pending items.
-    // bodiesTruncated (number) at top level when cap is hit.
     const reportJson = {
       window: { start: windowStart, end: windowEnd },
       sort: { moved, guardBlocked, noparse, unsorted, runErrors, kept, summary: { keptRuleCount, pinnedCount } },
       reminders: remindersForJson,
       questions: openQuestions,
       junk: junkItems,
+      fresh: freshItems,
       ...(bodiesTruncated > 0 ? { bodiesTruncated } : {}),
     };
 
@@ -345,60 +441,59 @@ export async function runAgentReport({
     const notesWarning = lineCount > 60 ? `agent-notes.md 有 ${lineCount} 行，清理時間` : null;
 
     // --- LLM render ---
-    let message;
-    let status = 'ok';
-    let degradedDetail = null;
-    try {
-      const agentConfig = loadAgentConfig(_agentConfigPath);
-      const llmResult = await renderReport({ model: agentConfig.model, reportJson, notesContent });
-      message = llmResult.message_text;
-
-      // Apply LLM output (non-dry only)
-      if (!dry) {
-        for (const q of llmResult.new_questions || []) {
-          agentDb.addQuestion({ domain: q.domain || null, question: q.question, now });
-        }
-        for (const r of llmResult.auto_resolved_reminders || []) {
-          agentDb.resolveReminder(r.id, 'auto', now);
-        }
-      }
-
-      // Merge LLM junk flags into items (advisory only — NO moves, iron rule)
-      const VALID_JUNK_FLAGS = new Set(['pending-normal', 'pending-danger']);
-      for (const f of llmResult.junk_flags || []) {
-        const item = junkItems.find(j => j.id === f.id);
-        if (item && item.flag === 'pending' && VALID_JUNK_FLAGS.has(f.flag)) {
-          item.flag = f.flag;
-          if (f.reason) item.reason = f.reason;
-        }
-      }
-
-      if (notesWarning) message += `\n\n${notesWarning}`;
-    } catch (err) {
-      status = 'degraded';
-      degradedDetail = err?.message || 'LLM failure';
-      message = buildDegradedMessage(reportJson);
-      if (notesWarning) message += ` / ${notesWarning}`;
-    }
-
-    // --- Delivery ---
     if (dry) {
+      // Synchronous path for CLI --dry use (blocking is fine in a shell)
+      let message;
+      let status = 'ok';
+      let degradedDetail = null;
+      try {
+        const agentConfig = loadAgentConfig(_agentConfigPath);
+        const llmResult = await renderReport({ model: agentConfig.model, reportJson, notesContent });
+        message = llmResult.message_text;
+
+        // Apply LLM output (display only in dry mode — no DB writes)
+        // Merge LLM junk flags into items (advisory only — NO moves, iron rule)
+        const VALID_JUNK_FLAGS = new Set(['pending-normal', 'pending-danger']);
+        for (const f of llmResult.junk_flags || []) {
+          const item = junkItems.find(j => j.id === f.id);
+          if (item && item.flag === 'pending' && VALID_JUNK_FLAGS.has(f.flag)) {
+            item.flag = f.flag;
+            if (f.reason) item.reason = f.reason;
+          }
+        }
+
+        if (notesWarning) message += `\n\n${notesWarning}`;
+      } catch (err) {
+        status = 'degraded';
+        degradedDetail = err?.message || 'LLM failure';
+        message = buildDegradedMessage(reportJson);
+        if (notesWarning) message += ` / ${notesWarning}`;
+      }
+
       console.log(message);
-    } else {
-      if (!fs.existsSync(outboxDir)) fs.mkdirSync(outboxDir, { recursive: true });
-      const safeTs = now.replace(/[:.]/g, '-');
-      fs.writeFileSync(
-        path.join(outboxDir, `${safeTs}.json`),
-        JSON.stringify({ ts: now, text: message }, null, 2)
-      );
-      agentDb.logRun({
-        run_at: now, kind: 'report',
-        window_start: windowStart, window_end: windowEnd,
-        status, detail: degradedDetail
-      });
+      return { status, message, reportJson };
     }
 
-    return { status, message, reportJson };
+    // --- Async enqueue path (non-dry) — hand off to sweep ---
+    const agentConfig = loadAgentConfig(_agentConfigPath);
+    const { system, user } = buildRenderPrompt({ reportJson, notesContent });
+    const requestId = enqueueCliLLM({
+      kind: 'render', system, user,
+      model: agentConfig.model,
+      _queueDir,
+    });
+
+    agentDb.insertPending({
+      created_at: now,
+      origin,
+      window_start: windowStart,
+      window_end: windowEnd,
+      request_id: requestId,
+      report_json: JSON.stringify(reportJson),
+      status: 'open',
+    });
+
+    return { status: 'pending', requestId };
   } finally {
     agentDb.close();
   }

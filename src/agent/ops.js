@@ -7,6 +7,15 @@ import { execFile } from 'node:child_process';
 import { addRule, removeRule, addGuard, removeGuard, writeConfig } from '../commands/rule.js';
 import { SortLogDB } from '../sorter/db.js';
 
+function _writeOutbox(dir, text, now) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const safeTs = now.replace(/[:.]/g, '-');
+  fs.writeFileSync(
+    path.join(dir, `${safeTs}.json`),
+    JSON.stringify({ ts: now, text }, null, 2)
+  );
+}
+
 const VALID_OP_TYPES = new Set([
   'rule_add', 'rule_rm', 'guard_add', 'guard_rm',
   'rescue', 'reminder_ack', 'junk_rescue', 'junk_dismiss',
@@ -308,9 +317,14 @@ export async function executeOps(ops, deps) {
           // Fire-and-forget — ack immediately, run in background so poll loop is not blocked
           deps.runReport({ dry: false })
             .then(() => deps.drainOutbox())
-            .catch(err => {
-              console.error(`trigger_report background error: ${err.message}`);
-              if (deps.send) deps.send(`報告出錯：${err.message}`).catch(() => {});
+            .catch(async (err) => {
+              // Write error to outbox + drain — Toby must always get feedback
+              const now = deps.getNow();
+              const msg = `report 出唔到：${err.message}`;
+              if (deps.outboxDir) {
+                _writeOutbox(deps.outboxDir, msg, now);
+                try { await deps.drainOutbox(); } catch { /* best effort */ }
+              }
             });
           results.push('收到，睇緊 email…');
           break;

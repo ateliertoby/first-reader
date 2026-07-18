@@ -33,6 +33,7 @@ export function createHandler(deps) {
     rulesPath, notesPath, sortDbPath, lastReportPath,
     git, graphGet, graphPost,
     runReport, runAudit, drainOutbox, send,
+    outboxDir,
     getNow, deepVerify,
   } = deps;
 
@@ -54,6 +55,7 @@ export function createHandler(deps) {
         rulesPath, notesPath, sortDbPath,
         agentDb, git, graphGet, graphPost,
         runReport, runAudit, drainOutbox, send,
+        outboxDir,
         deepVerify: deepVerify ?? (async (claim, emailCtx) => {
           return runDeepVerify({ model, claim, context: emailCtx });
         }),

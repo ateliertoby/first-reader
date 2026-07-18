@@ -497,6 +497,39 @@ describe('cleanQueue', () => {
     assert.strictEqual(fs.existsSync(recentResPath), true, 'recent result should be kept');
   });
 
+  test('protectedIds exempts files from cleanup', () => {
+    const now = new Date('2026-07-18T12:00:00Z');
+    const reqDir = path.join(tmpDir, 'requests');
+    const resDir = path.join(tmpDir, 'results');
+    fs.mkdirSync(reqDir, { recursive: true });
+    fs.mkdirSync(resDir, { recursive: true });
+
+    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60_000);
+
+    // Old file that IS protected
+    const protectedReqPath = path.join(reqDir, 'protected-id.json');
+    fs.writeFileSync(protectedReqPath, '{}');
+    fs.utimesSync(protectedReqPath, twoHoursAgo, twoHoursAgo);
+
+    const protectedResPath = path.join(resDir, 'protected-id.json');
+    fs.writeFileSync(protectedResPath, '{}');
+    fs.utimesSync(protectedResPath, twoHoursAgo, twoHoursAgo);
+
+    // Old file that is NOT protected
+    const unprotectedPath = path.join(reqDir, 'unprotected-id.json');
+    fs.writeFileSync(unprotectedPath, '{}');
+    fs.utimesSync(unprotectedPath, twoHoursAgo, twoHoursAgo);
+
+    cleanQueue(now.toISOString(), tmpDir, ['protected-id']);
+
+    // Protected files survive despite being old
+    assert.strictEqual(fs.existsSync(protectedReqPath), true, 'protected request should survive');
+    assert.strictEqual(fs.existsSync(protectedResPath), true, 'protected result should survive');
+
+    // Unprotected old file deleted
+    assert.strictEqual(fs.existsSync(unprotectedPath), false, 'unprotected old request should be deleted');
+  });
+
   test('handles missing queue directories gracefully', () => {
     assert.doesNotThrow(() => {
       cleanQueue(new Date().toISOString(), path.join(tmpDir, 'nonexistent'));

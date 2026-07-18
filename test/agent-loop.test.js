@@ -3,53 +3,23 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { msUntilNext, runLoop } from '../src/agent/loop.js';
+import { msUntilNextMonthly, runLoop } from '../src/agent/loop.js';
 import { AgentDB } from '../src/agent/db.js';
 import { _setIntentTransportForTesting } from '../src/agent/intent.js';
 
-// --- msUntilNext ---
+// --- msUntilNextMonthly ---
 
-describe('msUntilNext', () => {
-  test('before today slot: positive minutes remain', () => {
-    // 2026-07-18T00:00:00Z = 08:00 HKT, target 08:30 -> 30 min
-    const ms = msUntilNext('08:30', 'Asia/Hong_Kong', '2026-07-18T00:00:00Z');
-    assert.strictEqual(ms, 30 * 60 * 1000);
+describe('msUntilNextMonthly', () => {
+  test('1st of month before slot: fires today', () => {
+    // 2026-08-01T00:00:00Z = 08:00 HKT, target 09:00 -> 60min
+    const ms = msUntilNextMonthly('09:00', 'Asia/Hong_Kong', '2026-08-01T00:00:00Z');
+    assert.strictEqual(ms, 60 * 60 * 1000);
   });
 
-  test('after today slot: wraps to next day', () => {
-    // 2026-07-18T02:00:00Z = 10:00 HKT, target 08:30 -> 22h30m
-    const ms = msUntilNext('08:30', 'Asia/Hong_Kong', '2026-07-18T02:00:00Z');
-    assert.strictEqual(ms, (22 * 60 + 30) * 60 * 1000);
-  });
-
-  test('exactly at slot: wraps to next day (24h)', () => {
-    // 2026-07-18T00:30:00Z = 08:30 HKT exactly at 08:30
-    const ms = msUntilNext('08:30', 'Asia/Hong_Kong', '2026-07-18T00:30:00Z');
-    assert.strictEqual(ms, 24 * 60 * 60 * 1000);
-  });
-
-  test('timezone honored: same UTC, different tz gives different result', () => {
-    // 2026-07-18T12:30:00Z
-    const hkt = msUntilNext('08:30', 'Asia/Hong_Kong', '2026-07-18T12:30:00Z');
-    // HKT = 20:30 -> 12h until next 08:30
-    assert.strictEqual(hkt, 12 * 60 * 60 * 1000);
-
-    const edt = msUntilNext('08:30', 'America/New_York', '2026-07-18T12:30:00Z');
-    // EDT = 08:30 exactly -> 24h
-    assert.strictEqual(edt, 24 * 60 * 60 * 1000);
-
-    assert.notStrictEqual(hkt, edt);
-  });
-
-  test('accounts for seconds within the minute', () => {
-    // 2026-07-18T00:00:30Z = 08:00:30 HKT, target 08:30 -> 29m30s
-    const ms = msUntilNext('08:30', 'Asia/Hong_Kong', '2026-07-18T00:00:30Z');
-    assert.strictEqual(ms, (29 * 60 + 30) * 1000);
-  });
-
-  test('accepts Date object', () => {
-    const ms = msUntilNext('08:30', 'Asia/Hong_Kong', new Date('2026-07-18T00:00:00Z'));
-    assert.strictEqual(ms, 30 * 60 * 1000);
+  test('1st of month after slot: fires next month', () => {
+    // 2026-08-01T02:00:00Z = 10:00 HKT, target 09:00 -> next month
+    const ms = msUntilNextMonthly('09:00', 'Asia/Hong_Kong', '2026-08-01T02:00:00Z');
+    assert.ok(ms > 29 * 24 * 60 * 60 * 1000); // at least 29 days
   });
 });
 
@@ -101,7 +71,6 @@ describe('runLoop', () => {
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: path.join(tmpDir, 'outbox'),
       _maxPolls: 1,
-      _reportTime: '08:30',
       _timezone: 'Asia/Hong_Kong',
       _getNow: () => '2026-07-18T10:00:00Z',
     });
@@ -129,7 +98,6 @@ describe('runLoop', () => {
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: outboxDir,
       _maxPolls: 1,
-      _reportTime: '08:30',
       _timezone: 'Asia/Hong_Kong',
     });
 
@@ -157,7 +125,6 @@ describe('runLoop', () => {
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: path.join(tmpDir, 'outbox'),
       _maxPolls: 1,
-      _reportTime: '08:30',
       _timezone: 'Asia/Hong_Kong',
     });
 
@@ -179,7 +146,6 @@ describe('runLoop', () => {
       _stateFile: stateFile,
       _outboxDir: path.join(tmpDir, 'outbox'),
       _maxPolls: 1,
-      _reportTime: '08:30',
       _timezone: 'Asia/Hong_Kong',
     });
 
@@ -203,7 +169,6 @@ describe('runLoop', () => {
       _stateFile: stateFile,
       _outboxDir: path.join(tmpDir, 'outbox'),
       _maxPolls: 1,
-      _reportTime: '08:30',
       _timezone: 'Asia/Hong_Kong',
     });
 
@@ -221,7 +186,6 @@ describe('runLoop', () => {
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: path.join(tmpDir, 'outbox'),
       _maxPolls: 1,
-      _reportTime: '08:30',
       _timezone: 'Asia/Hong_Kong',
       onMessage: async (text, ctx) => {
         handlerCalls.push({ text, ctx });
@@ -245,7 +209,6 @@ describe('runLoop', () => {
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: path.join(tmpDir, 'outbox'),
       _maxPolls: 1,
-      _reportTime: '08:30',
       _timezone: 'Asia/Hong_Kong',
       onMessage: async () => null,
     });
@@ -263,7 +226,6 @@ describe('runLoop', () => {
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: path.join(tmpDir, 'outbox'),
       _maxPolls: 1,
-      _reportTime: '08:30',
       _timezone: 'Asia/Hong_Kong',
     });
 
