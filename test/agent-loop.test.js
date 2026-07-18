@@ -5,6 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { msUntilNext, runLoop } from '../src/agent/loop.js';
 import { AgentDB } from '../src/agent/db.js';
+import { _setIntentTransportForTesting } from '../src/agent/intent.js';
 
 // --- msUntilNext ---
 
@@ -139,7 +140,14 @@ describe('runLoop', () => {
     }
   });
 
-  test('default onMessage returns B4 acknowledgment', async () => {
+  test('default handler processes messages via intent parser', async () => {
+    // Mock the LLM intent transport so default handler works without real API
+    _setIntentTransportForTesting(() => ({
+      ops: [],
+      reply_text: '收到你嘅 message',
+      needs_clarification: false
+    }));
+
     const messages = [{ chat: { id: 100 }, text: 'hello' }];
     const channel = makeMockChannel([messages]);
 
@@ -154,7 +162,9 @@ describe('runLoop', () => {
     });
 
     assert.strictEqual(channel.sent.length, 1);
-    assert.ok(channel.sent[0].includes('B4'));
+    assert.strictEqual(channel.sent[0], '收到你嘅 message');
+
+    _setIntentTransportForTesting(null);
   });
 
   test('offset persisted across restarts', async () => {

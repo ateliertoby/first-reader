@@ -259,6 +259,12 @@ export async function runAgentReport({
       junk: junkItems
     };
 
+    // Persist for handler context (handler reads this for intent parsing)
+    if (!dry) {
+      const lrp = path.join(path.dirname(outboxDir), 'agent-last-report.json');
+      fs.writeFileSync(lrp, JSON.stringify(reportJson, null, 2));
+    }
+
     // --- Notes check ---
     const notesContent = loadNotes(notesPath);
     const lineCount = notesContent.split('\n').length;

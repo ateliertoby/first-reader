@@ -56,12 +56,12 @@ export function removeGuard(config, word) {
   return { ...config, guards: filtered };
 }
 
-function writeConfig(config) {
-  // Validate before write
-  const tmpPath = CONFIG_PATH + '.tmp';
+export function writeConfig(config, configPath = CONFIG_PATH) {
+  // Validate before write — atomic: tmp → loadRules → rename
+  const tmpPath = configPath + '.tmp';
   fs.writeFileSync(tmpPath, JSON.stringify(config, null, 2) + '\n');
   loadRules(tmpPath); // throws on invalid
-  fs.renameSync(tmpPath, CONFIG_PATH);
+  fs.renameSync(tmpPath, configPath);
 }
 
 export async function ruleList(options) {

@@ -1,4 +1,4 @@
-// Agent daemon loop — B3 skeleton (B4 wires intent handling, B6 wires launchd)
+// Agent daemon loop — B3/B4 (intent handling wired, B6 wires launchd)
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,6 +7,9 @@ import { TelegramChannel } from './telegram.js';
 import { AgentDB } from './db.js';
 import { loadAgentConfig } from './config.js';
 import { runAgentReport } from './report.js';
+import { createHandler } from './handler.js';
+import { graphGet, graphPost } from '../graph.js';
+import { makeGitRunner } from './ops.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULTS = {
@@ -15,7 +18,7 @@ const DEFAULTS = {
   stateFile: path.join(__dirname, '..', '..', 'data', 'telegram-state.json'),
 };
 
-const DEFAULT_ACK = '收到，對話功能 B4 上線';
+const PROJECT_ROOT = path.join(__dirname, '..', '..');
 
 // Pure — compute ms until next HH:MM in timezone from now
 export function msUntilNext(reportTime, timezone, now) {
@@ -66,22 +69,33 @@ export async function runLoop({
   const outboxDir = _outboxDir ?? DEFAULTS.outboxDir;
   const stateFile = _stateFile ?? DEFAULTS.stateFile;
 
-  // Load config only when needed (tests pass _reportTime/_timezone directly)
-  let reportTime = _reportTime;
-  let tz = _timezone;
-  if (reportTime == null || tz == null) {
-    let config;
-    try { config = loadAgentConfig(_agentConfigPath); }
-    catch { config = { reportTime: '08:30', timezone: 'Asia/Hong_Kong' }; }
-    reportTime = reportTime ?? config.reportTime;
-    tz = tz ?? config.timezone;
-  }
+  // Load config (shared for report schedule + handler)
+  let agentConfig;
+  try { agentConfig = loadAgentConfig(_agentConfigPath); }
+  catch { agentConfig = { model: 'claude-sonnet-5', reportTime: '08:30', timezone: 'Asia/Hong_Kong' }; }
+
+  let reportTime = _reportTime ?? agentConfig.reportTime;
+  const tz = _timezone ?? agentConfig.timezone;
 
   const getNow = _getNow ?? (() => new Date().toISOString());
   const channel = _channel ?? new TelegramChannel({ token, chatId });
   const db = _agentDb ?? new AgentDB(agentDbPath);
-  const handler = onMessage ?? (() => DEFAULT_ACK);
   const reportFn = _runReport ?? runAgentReport;
+
+  // Default handler = real intent handler; tests override via onMessage param
+  const handler = onMessage ?? createHandler({
+    agentDb: db,
+    model: agentConfig.model,
+    rulesPath: path.join(PROJECT_ROOT, 'config', 'rules.json'),
+    notesPath: path.join(PROJECT_ROOT, 'config', 'agent-notes.md'),
+    sortDbPath: path.join(PROJECT_ROOT, 'data', 'transactions.db'),
+    lastReportPath: path.join(PROJECT_ROOT, 'data', 'agent-last-report.json'),
+    git: makeGitRunner(PROJECT_ROOT),
+    graphGet, graphPost,
+    runReport: reportFn,
+    drainOutbox: () => channel.drainOutbox(outboxDir),
+    getNow,
+  });
 
   const offsetRef = loadOffset(stateFile);
 
@@ -137,7 +151,6 @@ export async function runLoop({
         // Opportunistic delivery — Toby is online, best time to send pending items
         await channel.drainOutbox(outboxDir);
 
-        // V1 stub: onMessage returns reply text (B4 replaces with real intent handler)
         const replyText = await handler(msg.text, { chatId: msg.chat?.id });
         if (replyText) await channel.send(replyText);
       }
