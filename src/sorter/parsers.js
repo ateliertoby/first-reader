@@ -239,6 +239,21 @@ function parseStripeReceipt(body, dateStr) {
   return null;
 }
 
+function parseFal(body, dateStr) {
+  const match = body.match(/added \$([\d,.]+) to your balance/);
+  if (match) {
+    return {
+      date: extractDate(dateStr),
+      merchant: 'fal.ai',
+      amount: parseFloat(match[1].replace(/,/g, '')),
+      currency: 'USD',
+      source: 'fal.ai',
+      type: 'topup'
+    };
+  }
+  return null;
+}
+
 function parseBowtie(body, dateStr) {
   const amountMatch = body.match(/(?:HKD|HK\$)\s*([\d,.]+)/i) || body.match(/premium.*?\$([\d,.]+)/i);
   if (amountMatch) {
@@ -266,6 +281,7 @@ const PARSERS = [
   { sender: 'payme', parse: parsePayMe },
   { sender: 'hangseng', parse: parseHangSeng },
   { sender: 'bowtie', parse: parseBowtie },
+  { sender: 'fal.ai', parse: parseFal },
   { sender: 'openrouter', parse: parseStripeReceipt },
   { sender: 'anthropic', parse: parseStripeReceipt },
   { sender: 'hushed', parse: parseStripeReceipt },

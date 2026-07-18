@@ -193,6 +193,39 @@ describe('parseTransaction', () => {
     assert.strictEqual(result.merchant, 'Vaultline c/o Meridian Apps Inc.');
   });
 
+  test('fal.ai balance topup', () => {
+    const result = parseTransaction(
+      'billing@fal.ai',
+      'Payment Confirmation',
+      'Order Confirmation Hi Alex Chan! You have successfully added $10.00 to your balance.',
+      '2026-07-13T02:30:00Z'
+    );
+    assert.deepStrictEqual(result, {
+      date: '2026-07-13',
+      merchant: 'fal.ai',
+      amount: 10.00,
+      currency: 'USD',
+      source: 'fal.ai',
+      type: 'topup'
+    });
+  });
+
+  test('fal.ai with zero-width wall (end-to-end via htmlToText)', async () => {
+    const { htmlToText } = await import('../src/sorter/html-text.js');
+    // Simulate real email structure: ZW literal wall + entity-encoded wall + real content
+    const zwLiterals = '​‌‍'.repeat(50);
+    const zwEntities = '&#65279;'.repeat(40) + '&#x200B;'.repeat(30);
+    const htmlBody = '<div>' + zwLiterals + zwEntities +
+      'Order Confirmation Hi Alex Chan! You have successfully added $10.00 to your balance. Dashboard</div>';
+    const cleanBody = htmlToText(htmlBody, 'html');
+    const result = parseTransaction('billing@fal.ai', 'Payment Confirmation', cleanBody, '2026-07-13T02:30:00Z');
+    assert.ok(result, 'should parse after htmlToText cleans the wall');
+    assert.strictEqual(result.amount, 10.00);
+    assert.strictEqual(result.currency, 'USD');
+    assert.strictEqual(result.merchant, 'fal.ai');
+    assert.strictEqual(result.type, 'topup');
+  });
+
   test('returns null for unparseable body', () => {
     const result = parseTransaction(
       'unknown@example.com',

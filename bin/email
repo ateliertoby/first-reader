@@ -17,6 +17,7 @@ import { ruleList, ruleAdd, ruleRm, ruleGuardAdd, ruleGuardRm } from '../src/com
 import { unsortCommand } from '../src/commands/unsort.js';
 import { reportCommand } from '../src/commands/report.js';
 import { rescueScanCommand } from '../src/commands/rescue-scan.js';
+import { reparseCommand } from '../src/commands/reparse.js';
 import { runAgentReport } from '../src/agent/report.js';
 import { runLoop } from '../src/agent/loop.js';
 import { requireEnv } from '../src/agent/config.js';
@@ -167,6 +168,13 @@ program
   .option('--since <date>', 'Only emails after this date (YYYY-MM-DD)')
   .option('--folder <name>', 'Scan specific folder (Accounting or Notifications)')
   .action(rescueScanCommand);
+
+program
+  .command('reparse')
+  .description('Re-parse unparsed accounting emails (parsed=0) with current parsers')
+  .option('--sender <substring>', 'Filter by sender address substring')
+  .option('--dry', 'Show what would be parsed without writing')
+  .action(reparseCommand);
 
 program
   .command('agent-report')

@@ -9,6 +9,7 @@ import { AgentDB } from './db.js';
 import { loadAgentConfig } from './config.js';
 import { loadRules, classify } from '../sorter/rules.js';
 import { SortLogDB } from '../sorter/db.js';
+import { htmlToText } from '../sorter/html-text.js';
 import { groupMoved, groupKept, markNovelty } from '../commands/report.js';
 import { graphGet, graphPost, buildGraphUrl } from '../graph.js';
 import { renderReport, buildRenderPrompt } from './llm.js';
@@ -382,12 +383,9 @@ export async function runAgentReport({
         const msgData = await graphGet(
           buildGraphUrl(`/me/messages/${target.id}`, { select: 'body,subject' })
         );
-        let bodyText = msgData?.body?.content || '';
-        if (msgData?.body?.contentType === 'html') {
-          bodyText = bodyText.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
-        }
-        // Collapse whitespace and truncate
-        bodyText = bodyText.replace(/\s+/g, ' ').trim();
+        let bodyText = htmlToText(
+          msgData?.body?.content, msgData?.body?.contentType
+        );
         if (bodyText.length > 1200) bodyText = bodyText.slice(0, 1200);
 
         if (target.source === 'kept') {

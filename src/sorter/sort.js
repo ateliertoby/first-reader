@@ -1,6 +1,7 @@
 import { graphGet, graphPost, buildGraphUrl } from '../graph.js';
 import { loadRules, classify, subjectKey } from './rules.js';
 import { parseTransaction } from './parsers.js';
+import { htmlToText } from './html-text.js';
 import { TransactionDB, SortLogDB } from './db.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -178,10 +179,7 @@ export async function sort(options = {}) {
 
       if (result.bucket === 'accounting') {
         const fullMsg = await graphGet(`/me/messages/${msg.id}`);
-        let body = fullMsg.body?.content || '';
-        if (fullMsg.body?.contentType === 'html') {
-          body = body.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
-        }
+        const body = htmlToText(fullMsg.body?.content, fullMsg.body?.contentType);
         const tx = parseTransaction(senderAddr, subject, body, receivedAt);
         logEntry.parsed = tx ? 1 : 0;
         if (!tx) noparseLines.push(`  [NOPARSE] ${senderAddr} — ${subject}`);
