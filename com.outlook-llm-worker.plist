@@ -7,17 +7,17 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/bash</string>
-		<string>/Users/YOURUSER/Desktop/Project/outlook-cli/bin/llm-worker.sh</string>
+		<string>/Users/YOURUSER/outlook-cli/bin/llm-worker.sh</string>
 	</array>
 	<key>WorkingDirectory</key>
-	<string>/Users/YOURUSER/Desktop/Project/outlook-cli</string>
+	<string>/Users/YOURUSER/outlook-cli</string>
 	<key>KeepAlive</key>
 	<true/>
 	<key>ThrottleInterval</key>
 	<integer>30</integer>
 	<key>StandardOutPath</key>
-	<string>/Users/YOURUSER/Desktop/Project/outlook-cli/data/llm-worker.log</string>
+	<string>/Users/YOURUSER/outlook-cli/data/llm-worker.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/YOURUSER/Desktop/Project/outlook-cli/data/llm-worker.log</string>
+	<string>/Users/YOURUSER/outlook-cli/data/llm-worker.log</string>
 </dict>
 </plist>
