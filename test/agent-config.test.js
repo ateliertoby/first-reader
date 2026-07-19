@@ -125,3 +125,16 @@ describe('requireEnv', () => {
     assert.throws(() => requireEnv(KEY), { message: new RegExp(KEY) });
   });
 });
+
+test('renderModel defaults to model when absent, used when present', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-cfg-'));
+  const p = path.join(tmp, 'agent.json');
+
+  fs.writeFileSync(p, JSON.stringify({ model: 'claude-sonnet-4-6' }));
+  assert.strictEqual(loadAgentConfig(p).renderModel, 'claude-sonnet-4-6');
+
+  fs.writeFileSync(p, JSON.stringify({ model: 'claude-sonnet-4-6', renderModel: 'claude-opus-4-6' }));
+  assert.strictEqual(loadAgentConfig(p).renderModel, 'claude-opus-4-6');
+
+  fs.rmSync(tmp, { recursive: true });
+});

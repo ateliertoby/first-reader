@@ -496,3 +496,25 @@ describe('poisoned pending rows', () => {
     cleanup();
   });
 });
+
+test('completion archives the sent report to sent-reports/', async () => {
+  const tmpDir = makeTmpDir();
+  const { deps, agentDb, cleanup } = makeSweepDeps(tmpDir);
+  insertPending(agentDb, 'req-arch');
+  writeResult(deps.queueDir, 'req-arch', {
+    id: 'req-arch', ts: '2026-07-18T10:00:00Z', ok: true,
+    text: JSON.stringify({ message_text: 'archived report', new_questions: [], auto_resolved_reminders: [], junk_flags: [] }),
+  });
+
+  await runSweep(deps);
+
+  const dir = path.join(tmpDir, 'sent-reports');
+  const files = fs.readdirSync(dir);
+  assert.strictEqual(files.length, 1);
+  const rec = JSON.parse(fs.readFileSync(path.join(dir, files[0]), 'utf8'));
+  assert.strictEqual(rec.text, 'archived report');
+  assert.strictEqual(rec.origin, 'check');
+  assert.strictEqual(rec.status, 'ok');
+  cleanup();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

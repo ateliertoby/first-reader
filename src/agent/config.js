@@ -22,6 +22,9 @@ export function loadAgentConfig(configPath) {
 
   return {
     model: cfg.model,
+    // Report rendering is judgment-heavy and may run a stronger model than
+    // interactive intent parsing (which stays latency-sensitive).
+    renderModel: (typeof cfg.renderModel === 'string' && cfg.renderModel.trim() !== '') ? cfg.renderModel : cfg.model,
     timezone: cfg.timezone ?? 'Asia/Hong_Kong',
     idleHours: typeof cfg.idleHours === 'number' && cfg.idleHours > 0 ? cfg.idleHours : 24,
     renderDeadlineHours: typeof cfg.renderDeadlineHours === 'number' && cfg.renderDeadlineHours > 0 ? cfg.renderDeadlineHours : 8,

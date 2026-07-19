@@ -446,7 +446,7 @@ export async function runAgentReport({
       let degradedDetail = null;
       try {
         const agentConfig = loadAgentConfig(_agentConfigPath);
-        const llmResult = await renderReport({ model: agentConfig.model, reportJson, notesContent });
+        const llmResult = await renderReport({ model: agentConfig.renderModel ?? agentConfig.model, reportJson, notesContent });
         message = llmResult.message_text;
 
         // Apply LLM output (display only in dry mode — no DB writes)
@@ -477,7 +477,7 @@ export async function runAgentReport({
     const { system, user } = buildRenderPrompt({ reportJson, notesContent });
     const requestId = enqueueCliLLM({
       kind: 'render', system, user,
-      model: agentConfig.model,
+      model: agentConfig.renderModel ?? agentConfig.model,
       _queueDir,
     });
 

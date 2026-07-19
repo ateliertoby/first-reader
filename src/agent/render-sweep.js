@@ -23,6 +23,22 @@ function cleanupQueueFiles(requestId, queueDir) {
   }
 }
 
+// Keep a copy of every delivered report. The outbox deletes messages on
+// send, so without this archive there is no record of what Toby actually
+// received — which blocks iterating on report quality. Best-effort: an
+// archive failure must never block delivery.
+function archiveSent(outboxDir, text, now, meta) {
+  try {
+    const dir = path.join(path.dirname(outboxDir), 'sent-reports');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const safeTs = now.replace(/[:.]/g, '-');
+    fs.writeFileSync(
+      path.join(dir, `${safeTs}.json`),
+      JSON.stringify({ ts: now, ...meta, text }, null, 2)
+    );
+  } catch { /* best effort */ }
+}
+
 // Re-enqueue a render request from stored report_json + current notes.
 // Returns the new request ID.
 function reEnqueue(row, { notesPath, queueDir, model, retry }) {
@@ -77,6 +93,7 @@ async function doCompletion(row, llmResult, deps) {
 
   // Deliver
   writeOutbox(outboxDir, message, now);
+  archiveSent(outboxDir, message, now, { origin: row.origin, status: 'ok' });
   await drainOutbox();
 
   // Ledger
@@ -107,6 +124,7 @@ async function doDegradedCompletion(row, reason, deps) {
     ? buildDegradedMessage(reportJson)
     : `[degraded] ${reason}`;
   writeOutbox(outboxDir, message, now);
+  archiveSent(outboxDir, message, now, { origin: row.origin, status: 'degraded', reason });
   await drainOutbox();
 
   agentDb.logRun({
@@ -131,6 +149,7 @@ export async function runSweep({
   getNow,
 }) {
   const now = getNow();
+  const renderModel = config.renderModel ?? config.model;
   const openPendings = agentDb.openPendings();
 
   for (const row of openPendings) {
@@ -177,7 +196,7 @@ export async function runSweep({
               await doDegradedCompletion(row, 'JSON validation failed after 3 attempts', completionDeps);
               cleanupQueueFiles(row.request_id, queueDir);
             } else {
-              const newId = reEnqueue(row, { notesPath, queueDir, model: config.model, retry: true });
+              const newId = reEnqueue(row, { notesPath, queueDir, model: renderModel, retry: true });
               agentDb.updatePendingRequest(row.id, newId, row.enqueue_count + 1);
               // Clean old result
               try { fs.unlinkSync(resultPath); } catch { /* ok */ }
@@ -194,7 +213,7 @@ export async function runSweep({
               await doDegradedCompletion(row, `LLM error after 3 attempts: ${result.error}`, completionDeps);
               cleanupQueueFiles(row.request_id, queueDir);
             } else {
-              const newId = reEnqueue(row, { notesPath, queueDir, model: config.model, retry: false });
+              const newId = reEnqueue(row, { notesPath, queueDir, model: renderModel, retry: false });
               agentDb.updatePendingRequest(row.id, newId, row.enqueue_count + 1);
               cleanupQueueFiles(row.request_id, queueDir);
             }
@@ -207,7 +226,7 @@ export async function runSweep({
           if (row.enqueue_count >= MAX_ENQUEUE) {
             await doDegradedCompletion(row, 'Request lost after 3 attempts', completionDeps);
           } else {
-            const newId = reEnqueue(row, { notesPath, queueDir, model: config.model, retry: false });
+            const newId = reEnqueue(row, { notesPath, queueDir, model: renderModel, retry: false });
             agentDb.updatePendingRequest(row.id, newId, row.enqueue_count + 1);
           }
         } else if (ageMs > 2 * 60_000 && !row.interim_notified && row.origin === 'check') {
