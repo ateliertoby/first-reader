@@ -9,7 +9,6 @@ import { loadAgentConfig } from './config.js';
 import { runAgentReport, writeOutbox } from './report.js';
 import { createHandler } from './handler.js';
 import { graphGet, graphPost } from '../graph.js';
-import { makeGitRunner } from './ops.js';
 import { runFolderAudit } from './audit.js';
 import { cleanQueue } from './cli-transport.js';
 import { runSweep } from './render-sweep.js';
@@ -67,7 +66,7 @@ export function msUntilNextMonthly(reportTime, timezone, now) {
   return totalMs;
 }
 
-// Idle trigger — fire a report when Toby hasn't checked in a while
+// Idle trigger — fire a report when the owner hasn't checked in a while
 export function shouldTriggerIdle(agentDb, now, idleHours) {
   // Never fire while a render is already in flight
   const openPendings = agentDb.openPendings();
@@ -115,7 +114,7 @@ export async function runLoop({
   // Load config
   let agentConfig;
   try { agentConfig = loadAgentConfig(_agentConfigPath); }
-  catch { agentConfig = { model: 'claude-sonnet-4-6', timezone: 'Asia/Hong_Kong', idleHours: 24, renderDeadlineHours: 8, freshLookbackHours: 12 }; }
+  catch { agentConfig = { model: 'claude-sonnet-4-6', timezone: 'Asia/Hong_Kong', idleHours: 24, renderDeadlineHours: 8, freshLookbackHours: 12, ownerName: 'the user', replyLanguage: 'English' }; }
 
   const tz = _timezone ?? agentConfig.timezone;
 
@@ -129,11 +128,12 @@ export async function runLoop({
   const handler = onMessage ?? createHandler({
     agentDb: db,
     model: agentConfig.model,
+    ownerName: agentConfig.ownerName,
+    replyLanguage: agentConfig.replyLanguage,
     rulesPath: path.join(PROJECT_ROOT, 'config', 'rules.json'),
     notesPath,
     sortDbPath: path.join(PROJECT_ROOT, 'data', 'transactions.db'),
     lastReportPath,
-    git: makeGitRunner(PROJECT_ROOT),
     graphGet, graphPost,
     runReport: reportFn,
     runAudit: auditFn,
@@ -260,7 +260,7 @@ export async function runLoop({
         const kind = msg.text?.startsWith('/') ? 'command' : 'reply';
         db.logEngagement(now, kind);
 
-        // Opportunistic delivery — Toby is online, best time to send pending items
+        // Opportunistic delivery — the owner is online, best time to send pending items
         await channel.drainOutbox(outboxDir);
 
         const replyText = await handler(msg.text, { chatId: msg.chat?.id });

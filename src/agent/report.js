@@ -444,7 +444,7 @@ export async function runAgentReport({
       let message;
       let status = 'ok';
       try {
-        const llmResult = await renderReport({ model: agentConfig.renderModel ?? agentConfig.model, reportJson, notesContent });
+        const llmResult = await renderReport({ model: agentConfig.renderModel ?? agentConfig.model, reportJson, notesContent, ownerName: agentConfig.ownerName, replyLanguage: agentConfig.replyLanguage });
         message = llmResult.message_text;
 
         // Apply LLM junk flags (display only — no DB writes in dry mode)
@@ -469,7 +469,7 @@ export async function runAgentReport({
     }
 
     // --- Async enqueue path (non-dry) — hand off to sweep ---
-    const { system, user } = buildRenderPrompt({ reportJson, notesContent });
+    const { system, user } = buildRenderPrompt({ reportJson, notesContent, ownerName: agentConfig.ownerName, replyLanguage: agentConfig.replyLanguage });
     const requestId = enqueueCliLLM({
       kind: 'render', system, user,
       model: agentConfig.renderModel ?? agentConfig.model,

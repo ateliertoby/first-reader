@@ -98,6 +98,18 @@ export class AgentDB {
       )
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS rule_changes (
+        id INTEGER PRIMARY KEY,
+        ts TEXT NOT NULL,
+        user_text TEXT NOT NULL,
+        op_type TEXT NOT NULL,
+        rule_id TEXT,
+        before_json TEXT,
+        after_json TEXT
+      )
+    `);
+
     // Questions
     this._addQuestion = this.db.prepare(`
       INSERT INTO agent_questions (asked_at, domain, question, status)
@@ -198,6 +210,12 @@ export class AgentDB {
     this._pruneSeen = this.db.prepare(
       `DELETE FROM agent_seen WHERE seen_at < @cutoff`
     );
+
+    // Rule changes
+    this._logRuleChange = this.db.prepare(`
+      INSERT INTO rule_changes (ts, user_text, op_type, rule_id, before_json, after_json)
+      VALUES (@ts, @user_text, @op_type, @rule_id, @before_json, @after_json)
+    `);
   }
 
   // --- Questions ---
@@ -358,6 +376,19 @@ export class AgentDB {
   pruneSeen(now) {
     const cutoff = _subtractDays(now, 14);
     return this._pruneSeen.run({ cutoff }).changes;
+  }
+
+  // --- Rule changes ---
+
+  logRuleChange({ ts, user_text, op_type, rule_id, before_json, after_json }) {
+    this._logRuleChange.run({
+      ts,
+      user_text: user_text ?? '',
+      op_type,
+      rule_id: rule_id ?? null,
+      before_json: before_json ?? null,
+      after_json: after_json ?? null,
+    });
   }
 
   // Atomically advance read_watermark, insert pending render, and record seen

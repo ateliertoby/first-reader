@@ -25,7 +25,8 @@ describe('loadAgentConfig', () => {
   test('loads valid config with all fields', () => {
     const p = writeConfig({
       model: 'claude-sonnet-5', timezone: 'Asia/Hong_Kong',
-      idleHours: 12, renderDeadlineHours: 4, readBodyCap: 50
+      idleHours: 12, renderDeadlineHours: 4, readBodyCap: 50,
+      ownerName: 'Alex', replyLanguage: 'French'
     });
     const cfg = loadAgentConfig(p);
     assert.strictEqual(cfg.model, 'claude-sonnet-5');
@@ -33,6 +34,8 @@ describe('loadAgentConfig', () => {
     assert.strictEqual(cfg.idleHours, 12);
     assert.strictEqual(cfg.renderDeadlineHours, 4);
     assert.strictEqual(cfg.readBodyCap, 50);
+    assert.strictEqual(cfg.ownerName, 'Alex');
+    assert.strictEqual(cfg.replyLanguage, 'French');
   });
 
   test('applies defaults for missing optional fields', () => {
@@ -42,6 +45,8 @@ describe('loadAgentConfig', () => {
     assert.strictEqual(cfg.idleHours, 24);
     assert.strictEqual(cfg.renderDeadlineHours, 8);
     assert.strictEqual(cfg.readBodyCap, 40);
+    assert.strictEqual(cfg.ownerName, 'the user');
+    assert.strictEqual(cfg.replyLanguage, 'English');
   });
 
   test('throws on missing model', () => {
@@ -100,6 +105,15 @@ describe('loadAgentConfig', () => {
     assert.strictEqual(cfg.idleHours, 24);
     assert.strictEqual(cfg.renderDeadlineHours, 8);
     assert.strictEqual(cfg.readBodyCap, 40);
+    assert.strictEqual(cfg.ownerName, 'Alex');
+    assert.strictEqual(cfg.replyLanguage, 'Cantonese with English technical terms');
+  });
+
+  test('missing file throws bootstrap message', () => {
+    assert.throws(
+      () => loadAgentConfig('/tmp/nonexistent-outlook-cli-test/agent.json'),
+      { message: /Copy config\/agent\.example\.json/ }
+    );
   });
 });
 

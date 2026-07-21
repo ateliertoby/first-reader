@@ -381,7 +381,6 @@ describe('fire-and-forget trigger ops', () => {
       notesPath: path.join(tmpDir, 'agent-notes.md'),
       sortDbPath: path.join(tmpDir, 'transactions.db'),
       agentDb,
-      git: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
       graphGet: async () => ({ id: 'inbox-id', value: [] }),
       graphPost: async () => ({ id: 'new-id' }),
       runReport: overrides.runReport ?? (async () => ({})),

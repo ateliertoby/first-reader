@@ -11,10 +11,6 @@ function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-handler-'));
 }
 
-function stubGit() {
-  return async () => ({ exitCode: 0, stdout: '', stderr: '' });
-}
-
 describe('createHandler', () => {
   let tmpDir, agentDb;
 
@@ -33,11 +29,12 @@ describe('createHandler', () => {
     return createHandler({
       agentDb,
       model: 'claude-sonnet-5',
+      ownerName: 'TestUser',
+      replyLanguage: 'English',
       rulesPath: path.join(tmpDir, 'rules.json'),
       notesPath: path.join(tmpDir, 'agent-notes.md'),
       sortDbPath: path.join(tmpDir, 'transactions.db'),
       lastReportPath: path.join(tmpDir, 'agent-last-report.json'),
-      git: stubGit(),
       graphGet: async () => ({ id: 'inbox-id' }),
       graphPost: async () => ({ id: 'new-id' }),
       runReport: async () => ({}),
@@ -50,27 +47,27 @@ describe('createHandler', () => {
   test('clarification: returns reply_text only, no ops executed', async () => {
     _setIntentTransportForTesting(() => ({
       ops: [],
-      reply_text: '你想做乜？可以講清楚啲',
+      reply_text: 'Could you clarify what you mean?',
       needs_clarification: true,
     }));
 
     const handler = makeHandler();
     const reply = await handler('hmm');
 
-    assert.strictEqual(reply, '你想做乜？可以講清楚啲');
+    assert.strictEqual(reply, 'Could you clarify what you mean?');
   });
 
   test('no ops, no clarification: returns reply_text', async () => {
     _setIntentTransportForTesting(() => ({
       ops: [],
-      reply_text: '收到',
+      reply_text: 'OK',
       needs_clarification: false,
     }));
 
     const handler = makeHandler();
     const reply = await handler('hello');
 
-    assert.strictEqual(reply, '收到');
+    assert.strictEqual(reply, 'OK');
   });
 
   test('ops path: returns concatenated confirmations plus reply_text', async () => {
@@ -83,7 +80,7 @@ describe('createHandler', () => {
       ops: [
         { type: 'rule_add', bucket: 'notifications', domains: ['test.com'] },
       ],
-      reply_text: '搞掂',
+      reply_text: 'Done',
       needs_clarification: false,
     }));
 
@@ -91,7 +88,7 @@ describe('createHandler', () => {
     const reply = await handler('add rule for test.com');
 
     assert.ok(reply.includes('已落 rule'), `Expected rule confirmation, got: ${reply}`);
-    assert.ok(reply.includes('搞掂'), `Expected reply_text, got: ${reply}`);
+    assert.ok(reply.includes('Done'), `Expected reply_text, got: ${reply}`);
   });
 
   test('context loading tolerates missing last-report file', async () => {
@@ -99,13 +96,13 @@ describe('createHandler', () => {
     _setIntentTransportForTesting((args) => {
       // Verify no untrusted_report_data in user prompt (file missing)
       assert.ok(!args.user.includes('untrusted_report_data'));
-      return { ops: [], reply_text: '收到', needs_clarification: false };
+      return { ops: [], reply_text: 'OK', needs_clarification: false };
     });
 
     const handler = makeHandler();
     const reply = await handler('hi');
 
-    assert.strictEqual(reply, '收到');
+    assert.strictEqual(reply, 'OK');
   });
 
   test('context loading includes last-report data when file exists', async () => {

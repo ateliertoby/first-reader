@@ -481,7 +481,7 @@ describe('inspect op wiring', () => {
         notesPath: '/dev/null',
         sortDbPath: '/dev/null',
         agentDb,
-        git: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+
         graphGet: async () => ({}),
         graphPost: async () => ({}),
         runReport: async () => ({}),
@@ -518,7 +518,7 @@ describe('inspect op wiring', () => {
         notesPath: '/dev/null',
         sortDbPath: '/dev/null',
         agentDb,
-        git: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+
         graphGet: async () => ({}),
         graphPost: async () => ({}),
         runReport: async () => ({}),

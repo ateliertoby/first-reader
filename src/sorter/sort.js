@@ -185,7 +185,7 @@ export async function sort(options = {}) {
         if (!tx) noparseLines.push(`  [NOPARSE] ${senderAddr} — ${subject}`);
         if (!dryRun) {
           if (tx) txDb.insert({ ...tx, raw_subject: subject, email_id: msg.id });
-          // move 會改 message id — audit log 要記新 id，unsort 先搵得返
+          // move changes the message id — the audit log must record the new id or unsort cannot find it
           const movedMsg = await graphPost(`/me/messages/${msg.id}/move`, { destinationId: accountingFolderId });
           if (movedMsg?.id) logEntry.email_id = movedMsg.id;
         }

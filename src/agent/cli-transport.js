@@ -37,7 +37,7 @@ const SCHEMA_TEXT = {
   "junk_flags": [{ "id": string, "flag": "pending-normal"|"pending-danger", "reason": string }] }`,
   intent: `Output JSON schema:
 { "ops": [{ "type": string, ...op-specific params per the catalog above }],
-  "reply_text": string (Cantonese reply to Toby),
+  "reply_text": string (reply to the owner in their configured language),
   "needs_clarification": boolean }`,
   audit: `Output JSON schema:
 { "suspects": [{ "folder": string, "sender": string, "subject_sample": string, "count": number,

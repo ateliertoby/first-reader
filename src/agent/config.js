@@ -7,7 +7,18 @@ const DEFAULT_CONFIG_PATH = path.resolve(__dirname, '../../config/agent.json');
 
 export function loadAgentConfig(configPath) {
   const p = configPath ?? DEFAULT_CONFIG_PATH;
-  const raw = fs.readFileSync(p, 'utf-8');
+  let raw;
+  try {
+    raw = fs.readFileSync(p, 'utf-8');
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      throw new Error(
+        `Config file not found: ${p}\n` +
+        'Copy config/agent.example.json to config/agent.json and fill in your settings.'
+      );
+    }
+    throw e;
+  }
   const cfg = JSON.parse(raw);
 
   if (typeof cfg.model !== 'string' || cfg.model.trim() === '') {
@@ -29,6 +40,8 @@ export function loadAgentConfig(configPath) {
     idleHours: typeof cfg.idleHours === 'number' && cfg.idleHours > 0 ? cfg.idleHours : 24,
     renderDeadlineHours: typeof cfg.renderDeadlineHours === 'number' && cfg.renderDeadlineHours > 0 ? cfg.renderDeadlineHours : 8,
     readBodyCap: typeof cfg.readBodyCap === 'number' && cfg.readBodyCap > 0 ? cfg.readBodyCap : 40,
+    ownerName: (typeof cfg.ownerName === 'string' && cfg.ownerName.trim() !== '') ? cfg.ownerName : 'the user',
+    replyLanguage: (typeof cfg.replyLanguage === 'string' && cfg.replyLanguage.trim() !== '') ? cfg.replyLanguage : 'English',
   };
 }
 

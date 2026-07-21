@@ -179,17 +179,17 @@ describe('classify', () => {
     assert.strictEqual(r.bucket, null);
   });
 
-  test('guard blocks: antbank with "失敗" in subject', () => {
-    // antbank-tx subject doesn't include 還款失敗 anymore (removed per spec)
-    // but if it had a match + guard word:
+  test('guard blocks: antbank with failure keyword in subject', () => {
+    // Guard word in subject should block sorting even when a rule matches:
     const r = classify('hk_antbank_service@notify.antbank.hk', '轉賬成功 but then 失敗', config);
     assert.strictEqual(r.bucket, 'accounting');
     assert.strictEqual(r.ruleId, 'antbank-tx');
     assert.strictEqual(r.guarded, true);
   });
 
-  // Correction: antbank 還款失敗 唔係交易記錄 — Toby 2026-07-13 裁定入 notifications（push 已見）
-  test('antbank 還款失敗 → notifications via ignoreGuards, never accounting', () => {
+  // Repayment-failure notices are notifications, not transactions — the ignoreGuards
+  // flag ensures they bypass the guard and land in notifications, never accounting.
+  test('antbank repayment failure -> notifications via ignoreGuards, never accounting', () => {
     const r = classify('hk_antbank_service@notify.antbank.hk', 'PayLater 還款失敗（PayLater Autopay Failed）', config);
     assert.strictEqual(r.bucket, 'notifications');
     assert.strictEqual(r.ruleId, 'antbank-hk');

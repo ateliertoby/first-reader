@@ -7,7 +7,19 @@ const DEFAULT_CONFIG = path.join(__dirname, '..', '..', 'config', 'rules.json');
 const VALID_BUCKETS = new Set(['accounting', 'notifications', 'keep']);
 
 export function loadRules(configPath = DEFAULT_CONFIG) {
-  const raw = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  let fileContent;
+  try {
+    fileContent = fs.readFileSync(configPath, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      throw new Error(
+        `Config file not found: ${configPath}\n` +
+        'Copy config/rules.example.json to config/rules.json and fill in your sorting rules.'
+      );
+    }
+    throw e;
+  }
+  const raw = JSON.parse(fileContent);
   if (!Array.isArray(raw.guards)) throw new Error('guards must be an array');
   if (!Array.isArray(raw.rules)) throw new Error('rules must be an array');
 

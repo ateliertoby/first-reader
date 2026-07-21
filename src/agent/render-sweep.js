@@ -24,7 +24,7 @@ function cleanupQueueFiles(requestId, queueDir) {
 }
 
 // Keep a copy of every delivered report. The outbox deletes messages on
-// send, so without this archive there is no record of what Toby actually
+// send, so without this archive there is no record of what the owner actually
 // received — which blocks iterating on report quality. Best-effort: an
 // archive failure must never block delivery.
 function archiveSent(outboxDir, text, now, meta) {
@@ -41,10 +41,10 @@ function archiveSent(outboxDir, text, now, meta) {
 
 // Re-enqueue a render request from stored report_json + current notes.
 // Returns the new request ID.
-function reEnqueue(row, { notesPath, queueDir, model, retry }) {
+function reEnqueue(row, { notesPath, queueDir, model, retry, ownerName, replyLanguage }) {
   const reportJson = JSON.parse(row.report_json);
   const notesContent = loadNotes(notesPath);
-  let { system, user } = buildRenderPrompt({ reportJson, notesContent });
+  let { system, user } = buildRenderPrompt({ reportJson, notesContent, ownerName, replyLanguage });
   if (retry) {
     system = `${RETRY_PREAMBLE}\n\n${system}`;
   }
@@ -196,7 +196,7 @@ export async function runSweep({
               await doDegradedCompletion(row, 'JSON validation failed after 3 attempts', completionDeps);
               cleanupQueueFiles(row.request_id, queueDir);
             } else {
-              const newId = reEnqueue(row, { notesPath, queueDir, model: renderModel, retry: true });
+              const newId = reEnqueue(row, { notesPath, queueDir, model: renderModel, retry: true, ownerName: config.ownerName, replyLanguage: config.replyLanguage });
               agentDb.updatePendingRequest(row.id, newId, row.enqueue_count + 1);
               // Clean old result
               try { fs.unlinkSync(resultPath); } catch { /* ok */ }
@@ -213,7 +213,7 @@ export async function runSweep({
               await doDegradedCompletion(row, `LLM error after 3 attempts: ${result.error}`, completionDeps);
               cleanupQueueFiles(row.request_id, queueDir);
             } else {
-              const newId = reEnqueue(row, { notesPath, queueDir, model: renderModel, retry: false });
+              const newId = reEnqueue(row, { notesPath, queueDir, model: renderModel, retry: false, ownerName: config.ownerName, replyLanguage: config.replyLanguage });
               agentDb.updatePendingRequest(row.id, newId, row.enqueue_count + 1);
               cleanupQueueFiles(row.request_id, queueDir);
             }
@@ -226,11 +226,11 @@ export async function runSweep({
           if (row.enqueue_count >= MAX_ENQUEUE) {
             await doDegradedCompletion(row, 'Request lost after 3 attempts', completionDeps);
           } else {
-            const newId = reEnqueue(row, { notesPath, queueDir, model: renderModel, retry: false });
+            const newId = reEnqueue(row, { notesPath, queueDir, model: renderModel, retry: false, ownerName: config.ownerName, replyLanguage: config.replyLanguage });
             agentDb.updatePendingRequest(row.id, newId, row.enqueue_count + 1);
           }
         } else if (ageMs > 2 * 60_000 && !row.interim_notified && row.origin === 'check') {
-          // 2min interim for user-triggered checks — let Toby know MBA may be asleep
+          // 2min interim for user-triggered checks — let the owner know the worker may be offline
           writeOutbox(outboxDir, 'LLM 未接工（MBA 可能瞓咗），醒返即補', now);
           await drainOutbox();
           agentDb.setInterimNotified(row.id);

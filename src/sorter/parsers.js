@@ -29,7 +29,7 @@ function parseAntBank(body, dateStr) {
       type: 'payment'
     };
   }
-  // 支付成功: "debited HKD38.00" / "扣取HKD38.00"
+  // Payment confirmation format: "debited HKD38.00" or debit in Chinese
   const debitMatch = body.match(/(?:debited|扣取)\s*(HKD|USD)([\d,.]+)/i);
   if (debitMatch) {
     return {
@@ -93,7 +93,7 @@ function parsePayPal(body, dateStr) {
       type: 'payment'
     };
   }
-  // 訂購 format: "你已向 MERCHANT 訂購 $12.00 USD"
+  // Order format: "You ordered from MERCHANT for $12.00 USD" (Chinese email template)
   const orderMatch = body.match(/你已向\s+(.+?)\s+(?:\(.*?\)\s+)?訂購\s+\$([\d,.]+)\s+(USD|HKD)/);
   if (orderMatch) {
     return {

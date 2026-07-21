@@ -3,7 +3,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
 import { addRule, removeRule, addGuard, removeGuard, writeConfig } from '../commands/rule.js';
 import { SortLogDB } from '../sorter/db.js';
 
@@ -86,70 +85,19 @@ function validateOp(op) {
 
 export { validateOp as _validateOp };
 
-// Production git runner — injectable via deps.git for testing
-export function makeGitRunner(cwd) {
-  return async (args) => {
-    return new Promise((resolve) => {
-      execFile('git', args, { cwd }, (err, stdout, stderr) => {
-        const exitCode = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
-        resolve({ exitCode, stdout: stdout ?? '', stderr: stderr ?? '' });
-      });
-    });
-  };
-}
-
-// Git flow: pull --rebase -> write -> add + commit -> push
-// On any failure: restore to post-pull state, best-effort abort
-async function withGitFlow(deps, filePath, writeFn, userText) {
-  const filename = path.basename(filePath);
-  const failMsg = `${filename} 有衝突，Air 嗰邊搞掂先`;
-
-  // 1. Pull
-  const pull = await deps.git(['pull', '--rebase']);
-  if (pull.exitCode !== 0) {
-    await deps.git(['rebase', '--abort']).catch(() => {});
-    return { ok: false, message: failMsg };
-  }
-
-  // Save post-pull state as revert target
+// Atomic write with backup/restore — replaces the git flow.
+// On any write failure the file reverts to its pre-write state.
+function atomicWrite(filePath, writeFn) {
   let backup;
   try { backup = fs.readFileSync(filePath, 'utf8'); } catch { backup = null; }
 
-  // 2. Write
   try {
     writeFn();
+    return { ok: true };
   } catch (e) {
     if (backup !== null) fs.writeFileSync(filePath, backup);
     return { ok: false, message: e.message };
   }
-
-  // 3. Add + commit
-  const truncated = userText.slice(0, 60);
-  const add = await deps.git(['add', filePath]);
-  if (add.exitCode !== 0) {
-    if (backup !== null) fs.writeFileSync(filePath, backup);
-    else { try { fs.unlinkSync(filePath); } catch {} }
-    return { ok: false, message: failMsg };
-  }
-
-  const commit = await deps.git(['commit', '-m', `agent: "${truncated}"`]);
-  if (commit.exitCode !== 0) {
-    if (backup !== null) fs.writeFileSync(filePath, backup);
-    else { try { fs.unlinkSync(filePath); } catch {} }
-    return { ok: false, message: failMsg };
-  }
-
-  // 4. Push
-  const push = await deps.git(['push']);
-  if (push.exitCode !== 0) {
-    await deps.git(['reset', 'HEAD~1']).catch(() => {});
-    await deps.git(['rebase', '--abort']).catch(() => {});
-    if (backup !== null) fs.writeFileSync(filePath, backup);
-    else { try { fs.unlinkSync(filePath); } catch {} }
-    return { ok: false, message: failMsg };
-  }
-
-  return { ok: true };
 }
 
 export async function executeOps(ops, deps) {
@@ -167,7 +115,7 @@ export async function executeOps(ops, deps) {
         case 'rule_add': {
           let ruleId;
           let probDate;
-          const gitResult = await withGitFlow(deps, deps.rulesPath, () => {
+          const writeResult = atomicWrite(deps.rulesPath, () => {
             const raw = JSON.parse(fs.readFileSync(deps.rulesPath, 'utf8'));
             const { config: newConfig, id } = addRule(raw, {
               bucket: op.bucket,
@@ -180,56 +128,106 @@ export async function executeOps(ops, deps) {
             ruleId = id;
             probDate = newConfig.rules.find(r => r.id === id).probationUntil;
             writeConfig(newConfig, deps.rulesPath);
-          }, deps.userText);
+          });
 
-          if (!gitResult.ok) {
-            results.push(gitResult.message);
+          if (!writeResult.ok) {
+            results.push(writeResult.message);
           } else {
+            try {
+              const raw = JSON.parse(fs.readFileSync(deps.rulesPath, 'utf8'));
+              const newRule = raw.rules.find(r => r.id === ruleId);
+              deps.agentDb.logRuleChange({
+                ts: deps.getNow(),
+                user_text: deps.userText,
+                op_type: 'rule_add',
+                rule_id: ruleId,
+                before_json: null,
+                after_json: newRule ? JSON.stringify(newRule) : null,
+              });
+            } catch { /* DB logging is best-effort */ }
             results.push(`已落 rule ${ruleId} [${op.bucket}]，probation 至 ${probDate}`);
           }
           break;
         }
 
         case 'rule_rm': {
-          const gitResult = await withGitFlow(deps, deps.rulesPath, () => {
+          // Capture the rule before removal for the audit log
+          let beforeJson = null;
+          try {
+            const raw = JSON.parse(fs.readFileSync(deps.rulesPath, 'utf8'));
+            const oldRule = raw.rules.find(r => r.id === op.id);
+            if (oldRule) beforeJson = JSON.stringify(oldRule);
+          } catch { /* ok */ }
+
+          const writeResult = atomicWrite(deps.rulesPath, () => {
             const raw = JSON.parse(fs.readFileSync(deps.rulesPath, 'utf8'));
             const newConfig = removeRule(raw, op.id);
             writeConfig(newConfig, deps.rulesPath);
-          }, deps.userText);
+          });
 
-          if (!gitResult.ok) {
-            results.push(gitResult.message);
+          if (!writeResult.ok) {
+            results.push(writeResult.message);
           } else {
+            try {
+              deps.agentDb.logRuleChange({
+                ts: deps.getNow(),
+                user_text: deps.userText,
+                op_type: 'rule_rm',
+                rule_id: op.id,
+                before_json: beforeJson,
+                after_json: null,
+              });
+            } catch { /* DB logging is best-effort */ }
             results.push(`已刪 rule "${op.id}"`);
           }
           break;
         }
 
         case 'guard_add': {
-          const gitResult = await withGitFlow(deps, deps.rulesPath, () => {
+          const writeResult = atomicWrite(deps.rulesPath, () => {
             const raw = JSON.parse(fs.readFileSync(deps.rulesPath, 'utf8'));
             const newConfig = addGuard(raw, op.word);
             writeConfig(newConfig, deps.rulesPath);
-          }, deps.userText);
+          });
 
-          if (!gitResult.ok) {
-            results.push(gitResult.message);
+          if (!writeResult.ok) {
+            results.push(writeResult.message);
           } else {
+            try {
+              deps.agentDb.logRuleChange({
+                ts: deps.getNow(),
+                user_text: deps.userText,
+                op_type: 'guard_add',
+                rule_id: null,
+                before_json: null,
+                after_json: JSON.stringify({ word: op.word }),
+              });
+            } catch { /* DB logging is best-effort */ }
             results.push(`已加 guard "${op.word}"`);
           }
           break;
         }
 
         case 'guard_rm': {
-          const gitResult = await withGitFlow(deps, deps.rulesPath, () => {
+          const writeResult = atomicWrite(deps.rulesPath, () => {
             const raw = JSON.parse(fs.readFileSync(deps.rulesPath, 'utf8'));
             const newConfig = removeGuard(raw, op.word);
             writeConfig(newConfig, deps.rulesPath);
-          }, deps.userText);
+          });
 
-          if (!gitResult.ok) {
-            results.push(gitResult.message);
+          if (!writeResult.ok) {
+            results.push(writeResult.message);
           } else {
+            try {
+              deps.agentDb.logRuleChange({
+                ts: deps.getNow(),
+                user_text: deps.userText,
+                op_type: 'guard_rm',
+                rule_id: null,
+                before_json: JSON.stringify({ word: op.word }),
+                after_json: null,
+              });
+            } catch { /* DB logging is best-effort */ }
             results.push(`已刪 guard "${op.word}"`);
           }
           break;
@@ -285,7 +283,7 @@ export async function executeOps(ops, deps) {
         case 'reminder_ack': {
           const reminderId = Number(op.id);
           const now = deps.getNow();
-          const ok = deps.agentDb.resolveReminder(reminderId, 'alex', now);
+          const ok = deps.agentDb.resolveReminder(reminderId, 'owner', now);
           if (ok) {
             results.push(`已確認 reminder #${reminderId} 解決`);
           } else {
@@ -318,7 +316,7 @@ export async function executeOps(ops, deps) {
           deps.runReport({ dry: false })
             .then(() => deps.drainOutbox())
             .catch(async (err) => {
-              // Write error to outbox + drain — Toby must always get feedback
+              // Write error to outbox + drain — the owner must always get feedback
               const now = deps.getNow();
               const msg = `report 出唔到：${err.message}`;
               if (deps.outboxDir) {
@@ -366,14 +364,14 @@ export async function executeOps(ops, deps) {
         }
 
         case 'note_add': {
-          const gitResult = await withGitFlow(deps, deps.notesPath, () => {
+          const writeResult = atomicWrite(deps.notesPath, () => {
             let content;
             try { content = fs.readFileSync(deps.notesPath, 'utf8'); } catch { content = ''; }
             fs.writeFileSync(deps.notesPath, content + op.text + '\n');
-          }, deps.userText);
+          });
 
-          if (!gitResult.ok) {
-            results.push(gitResult.message);
+          if (!writeResult.ok) {
+            results.push(writeResult.message);
           } else {
             results.push('已記低');
           }
