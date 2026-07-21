@@ -99,14 +99,15 @@ describe('loadAgentConfig', () => {
     assert.strictEqual(loadAgentConfig(p).idleHours, 24);
   });
 
-  test('loads the real config/agent.json via default path', () => {
-    const cfg = loadAgentConfig();
+  test('loads config/agent.example.json via explicit path', () => {
+    const examplePath = path.join(import.meta.dirname, '..', 'config', 'agent.example.json');
+    const cfg = loadAgentConfig(examplePath);
     assert.strictEqual(cfg.model, 'claude-sonnet-4-6');
     assert.strictEqual(cfg.idleHours, 24);
     assert.strictEqual(cfg.renderDeadlineHours, 8);
     assert.strictEqual(cfg.readBodyCap, 40);
     assert.strictEqual(cfg.ownerName, 'Alex');
-    assert.strictEqual(cfg.replyLanguage, 'Cantonese with English technical terms');
+    assert.strictEqual(cfg.replyLanguage, 'English');
   });
 
   test('missing file throws bootstrap message', () => {

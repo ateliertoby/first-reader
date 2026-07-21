@@ -1,0 +1,204 @@
+{
+  "version": 1,
+  "settings": {
+    "minAgeHours": 6
+  },
+  "guards": [
+    "失敗",
+    "declined",
+    "failed",
+    "failure",
+    "overdue",
+    "action required",
+    "被拒絕"
+  ],
+  "rules": [
+    {
+      "id": "acmebank-tx",
+      "bucket": "accounting",
+      "domains": ["acmebank.example"],
+      "subject": "交易|消費|Acme Card|轉數|入錢|取消交易|里數|退款",
+      "subjectExclude": "交易被拒絕"
+    },
+    {
+      "id": "acmebank-instalment",
+      "bucket": "accounting",
+      "domains": ["acmebank.example"],
+      "subject": "分期供款|繳交你的月結單結欠"
+    },
+    {
+      "id": "microbank-tx",
+      "bucket": "accounting",
+      "domains": ["microbank.example.hk"],
+      "subject": "PayLater 付款|轉賬成功|還款成功|支付成功"
+    },
+    {
+      "id": "fastpay-tx",
+      "bucket": "accounting",
+      "domains": ["fastpay.megabank.example.hk"],
+      "subject": "轉賬|增值|付款"
+    },
+    {
+      "id": "megabank-tx",
+      "bucket": "accounting",
+      "domains": ["megabank.example.hk", "megabank.example"],
+      "subject": "支付通知|payment transfer|Credit Card Transaction|Receipt of an inward|已繳付信用卡"
+    },
+    {
+      "id": "walletco-tx",
+      "bucket": "accounting",
+      "domains": ["walletco.example.hk", "walletco.example"],
+      "subject": "收據|Receipt|付款|提交"
+    },
+    {
+      "id": "tollgate-tx",
+      "bucket": "accounting",
+      "domains": ["tollgate.example.hk"],
+      "subject": "交易通知"
+    },
+    {
+      "id": "starbank-tx",
+      "bucket": "accounting",
+      "domains": ["starbank.example"],
+      "subject": "已執行繳費|Card-Not-Present"
+    },
+    {
+      "id": "burgerjoint-tx",
+      "bucket": "accounting",
+      "domains": ["burgerjoint.example"],
+      "subject": "訂單確認"
+    },
+    {
+      "id": "quickpay-tx",
+      "bucket": "accounting",
+      "domains": ["quickpay.example"],
+      "subject": "Receive Money|收款通知|Send Money"
+    },
+    {
+      "id": "unionbank-tx",
+      "bucket": "accounting",
+      "domains": ["unionbank.example"],
+      "subject": "成功轉賬"
+    },
+    {
+      "id": "saasco-tx",
+      "bucket": "accounting",
+      "domains": ["saasco.example"],
+      "subject": "receipt"
+    },
+    {
+      "id": "quickpay-ddi",
+      "bucket": "accounting",
+      "domains": ["quickpay.example"],
+      "subject": "Direct Debit Instruction Success"
+    },
+    {
+      "id": "codehub",
+      "bucket": "notifications",
+      "domains": ["codehub.example"]
+    },
+    {
+      "id": "devtools",
+      "bucket": "notifications",
+      "domains": ["devtools.example"]
+    },
+    {
+      "id": "microbank-notif",
+      "bucket": "notifications",
+      "domains": ["microbank.example.hk"],
+      "subject": "新登入通知|e-Statement|還款提醒"
+    },
+    {
+      "id": "starbank-notif",
+      "bucket": "notifications",
+      "domains": ["starbank.example"],
+      "subject": "登入|MyAuto"
+    },
+    {
+      "id": "2020-telecom",
+      "bucket": "notifications",
+      "domains": ["2020.example.hk"]
+    },
+    {
+      "id": "acmebank-notif",
+      "bucket": "notifications",
+      "domains": ["acmebank.example"],
+      "subject": "分期|設立|推薦共賞|騙局|新登入|信用限額"
+    },
+    {
+      "id": "fastpay-notif",
+      "bucket": "notifications",
+      "domains": ["fastpay.megabank.example.hk"],
+      "subject": "已連結|成功登入|身份證"
+    },
+    {
+      "id": "megabank-notif",
+      "bucket": "notifications",
+      "domains": ["megabank.example.hk", "megabank.example"],
+      "subject": "外匯展望"
+    },
+    {
+      "id": "unionbank-notif",
+      "bucket": "notifications",
+      "domains": ["unionbank.example"],
+      "subject": "數碼理財"
+    },
+    {
+      "id": "socialnet",
+      "bucket": "notifications",
+      "domains": ["socialnet.example"]
+    },
+    {
+      "id": "cloudhost",
+      "bucket": "notifications",
+      "domains": ["cloudhost.example"]
+    },
+    {
+      "id": "quickpay-notif",
+      "bucket": "notifications",
+      "domains": ["quickpay.example"],
+      "subject": "Payee|Instruction|防騙|安心"
+    },
+    {
+      "id": "broadrule",
+      "bucket": "notifications",
+      "domains": ["broadrule.example"]
+    },
+    {
+      "id": "microbank-hk",
+      "bucket": "notifications",
+      "domains": ["microbank.example.hk"],
+      "subject": "還款失敗",
+      "ignoreGuards": true
+    },
+    {
+      "id": "keep-vip",
+      "bucket": "keep",
+      "domains": ["vip-client.example"]
+    },
+    {
+      "id": "newservice-active",
+      "bucket": "notifications",
+      "domains": ["newservice.example"],
+      "probationUntil": "2099-01-01"
+    },
+    {
+      "id": "oldservice-expired",
+      "bucket": "notifications",
+      "domains": ["oldservice.example"],
+      "probationUntil": "2020-01-01"
+    },
+    {
+      "id": "tollgate-reminder",
+      "bucket": "notifications",
+      "domains": ["tollgate.example.hk"],
+      "subject": "繳費通知"
+    },
+    {
+      "id": "megabank-card-due",
+      "bucket": "notifications",
+      "domains": ["megabank.example.hk", "megabank.example"],
+      "subject": "信用卡付款提示"
+    }
+  ]
+}

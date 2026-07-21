@@ -5,14 +5,29 @@ import path from 'node:path';
 import os from 'node:os';
 import { loadRules, classify, subjectKey } from '../src/sorter/rules.js';
 
-const CONFIG_PATH = path.join(import.meta.dirname, '..', 'config', 'rules.json');
+const FIXTURE_PATH = path.join(import.meta.dirname, 'fixtures', 'rules.json');
+const EXAMPLE_PATH = path.join(import.meta.dirname, '..', 'config', 'rules.example.json');
 
 describe('loadRules', () => {
-  test('loads and validates config/rules.json', () => {
-    const config = loadRules(CONFIG_PATH);
+  test('loads and validates config/rules.example.json', () => {
+    const config = loadRules(EXAMPLE_PATH);
     assert.ok(Array.isArray(config.guards));
     assert.ok(Array.isArray(config.rules));
-    assert.ok(config.rules.length >= 48);
+    assert.ok(config.rules.length >= 3);
+  });
+
+  test('loads test fixture rules.json', () => {
+    const config = loadRules(FIXTURE_PATH);
+    assert.ok(Array.isArray(config.guards));
+    assert.ok(Array.isArray(config.rules));
+    assert.strictEqual(config.rules.length, 32);
+  });
+
+  test('throws on missing file with bootstrap hint', () => {
+    assert.throws(
+      () => loadRules('/tmp/nonexistent-outlook-cli-test/rules.json'),
+      { message: /Copy config\/rules\.example\.json/ }
+    );
   });
 
   test('throws on bad regex', () => {
@@ -115,481 +130,354 @@ describe('loadRules', () => {
 });
 
 describe('classify', () => {
-  const config = loadRules(CONFIG_PATH);
+  const config = loadRules(FIXTURE_PATH);
 
-  // Domain matching boundary cases
-  test('user1010@gmail.com does NOT match 1010.com.hk', () => {
-    const r = classify('user1010@gmail.com', '', config);
+  // --- Domain matching boundary cases ---
+
+  test('user2020@gmail.com does NOT match 2020.example.hk (label boundary)', () => {
+    const r = classify('user2020@gmail.com', '', config);
     assert.strictEqual(r.bucket, null);
   });
 
-  test('misc.com does NOT match sc.com', () => {
+  test('misc.com does NOT match quickpay.example (unrelated domain)', () => {
     const r = classify('user@misc.com', 'Receive Money', config);
     assert.strictEqual(r.bucket, null);
   });
 
-  test('subdomain matches: notify.antbank.hk matches antbank.hk', () => {
-    const r = classify('hk_antbank_service@notify.antbank.hk', 'PayLater 付款成功', config);
+  test('subdomain matches: notify.microbank.example.hk matches microbank.example.hk', () => {
+    const r = classify('svc@notify.microbank.example.hk', 'PayLater 付款成功', config);
     assert.strictEqual(r.bucket, 'accounting');
-    assert.strictEqual(r.ruleId, 'antbank-tx');
+    assert.strictEqual(r.ruleId, 'microbank-tx');
   });
 
   test('exact domain match works', () => {
-    const r = classify('noreply@github.com', 'PR merged', config);
+    const r = classify('noreply@codehub.example', 'PR merged', config);
     assert.strictEqual(r.bucket, 'notifications');
-    assert.strictEqual(r.ruleId, 'github');
+    assert.strictEqual(r.ruleId, 'codehub');
   });
 
-  // Bucket priority: accounting > notifications
+  // --- Bucket priority ---
+
   test('accounting beats notifications for same domain when subject matches', () => {
-    const r = classify('notify@mox.com', 'Mox Card交易成功', config);
+    const r = classify('notify@acmebank.example', 'Acme Card交易成功', config);
     assert.strictEqual(r.bucket, 'accounting');
-    assert.strictEqual(r.ruleId, 'mox-tx');
+    assert.strictEqual(r.ruleId, 'acmebank-tx');
   });
 
-  // Specificity: longer domain wins
-  test('payme.hsbc.com.hk wins over hsbc.com.hk', () => {
-    const r = classify('some@payme.hsbc.com.hk', '成功轉賬至銀行！', config);
+  // --- Domain specificity ---
+
+  test('fastpay.megabank.example.hk wins over megabank.example.hk (longer domain)', () => {
+    const r = classify('some@fastpay.megabank.example.hk', '成功轉賬至銀行！', config);
     assert.strictEqual(r.bucket, 'accounting');
-    assert.strictEqual(r.ruleId, 'payme-tx');
+    assert.strictEqual(r.ruleId, 'fastpay-tx');
   });
 
-  test('payme.hsbc.com.hk notification wins over hsbc.com.hk', () => {
-    const r = classify('no-reply@secure-app.payme.hsbc.com.hk', '成功登入PayMe', config);
+  test('fastpay notification wins over megabank notification (longer domain)', () => {
+    const r = classify('no-reply@secure.fastpay.megabank.example.hk', '成功登入FastPay', config);
     assert.strictEqual(r.bucket, 'notifications');
-    assert.strictEqual(r.ruleId, 'payme-notif');
+    assert.strictEqual(r.ruleId, 'fastpay-notif');
   });
 
-  // Guard tests
-  test('guard blocks: "Direct Debit Instruction Failure Notification" from sc.com', () => {
-    const r = classify('alerts@sc.com', 'Direct Debit Instruction Failure Notification', config);
+  // --- Guard tests ---
+
+  test('guard blocks: "Direct Debit Instruction Failure Notification" from quickpay.example', () => {
+    const r = classify('alerts@quickpay.example', 'Direct Debit Instruction Failure Notification', config);
     assert.strictEqual(r.bucket, 'notifications');
-    assert.strictEqual(r.ruleId, 'sc-notif');
+    assert.strictEqual(r.ruleId, 'quickpay-notif');
     assert.strictEqual(r.guarded, true);
   });
 
-  test('guard blocks: subject with "declined"', () => {
-    const r = classify('notify@mox.com', 'Your transaction was declined', config);
-    // "declined" is a guard word, and "transaction" doesn't match mox-tx subject regex
-    // Actually let's check - mox-tx subject: 交易|消費|Mox Card|轉數|入錢|取消交易|里數
-    // "Your transaction was declined" doesn't match any of these
-    // So it would fall through to mox-notif or not match at all
-    // Actually none of the mox rules match "Your transaction was declined"
-    // So bucket=null, no guard applies
-    assert.strictEqual(r.bucket, null);
-  });
-
-  test('guard blocks: antbank with failure keyword in subject', () => {
-    // Guard word in subject should block sorting even when a rule matches:
-    const r = classify('hk_antbank_service@notify.antbank.hk', '轉賬成功 but then 失敗', config);
-    assert.strictEqual(r.bucket, 'accounting');
-    assert.strictEqual(r.ruleId, 'antbank-tx');
+  test('guard blocks: subject with "declined" on broadrule', () => {
+    const r = classify('info@broadrule.example', 'Your request was declined', config);
+    assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.ruleId, 'broadrule');
     assert.strictEqual(r.guarded, true);
   });
 
-  // Repayment-failure notices are notifications, not transactions — the ignoreGuards
-  // flag ensures they bypass the guard and land in notifications, never accounting.
-  test('antbank repayment failure -> notifications via ignoreGuards, never accounting', () => {
-    const r = classify('hk_antbank_service@notify.antbank.hk', 'PayLater 還款失敗（PayLater Autopay Failed）', config);
+  test('guard blocks: microbank with failure keyword in subject', () => {
+    const r = classify('svc@notify.microbank.example.hk', '轉賬成功 but then 失敗', config);
+    assert.strictEqual(r.bucket, 'accounting');
+    assert.strictEqual(r.ruleId, 'microbank-tx');
+    assert.strictEqual(r.guarded, true);
+  });
+
+  test('microbank repayment failure -> notifications via ignoreGuards, never accounting', () => {
+    const r = classify('svc@notify.microbank.example.hk', 'PayLater 還款失敗（PayLater Autopay Failed）', config);
     assert.strictEqual(r.bucket, 'notifications');
-    assert.strictEqual(r.ruleId, 'antbank-hk');
+    assert.strictEqual(r.ruleId, 'microbank-hk');
     assert.strictEqual(r.guarded, false);
   });
 
-  // Legacy parity spot checks
-  test('Mox 交易 → accounting', () => {
-    const r = classify('notify@mox.com', 'Mox Card交易成功', config);
+  // --- Accounting parity checks ---
+
+  test('Acmebank 交易 -> accounting', () => {
+    const r = classify('notify@acmebank.example', 'Acme Card交易成功', config);
     assert.strictEqual(r.bucket, 'accounting');
   });
 
-  test('Mox 消費 with miles → accounting', () => {
-    const r = classify('notify@mox.com', '交易已完成並可賺取里數！', config);
+  test('Acmebank 消費 with miles -> accounting', () => {
+    const r = classify('notify@acmebank.example', '交易已完成並可賺取里數！', config);
     assert.strictEqual(r.bucket, 'accounting');
   });
 
-  test('Mox 已取消交易 → accounting', () => {
-    const r = classify('notify@mox.com', '已取消交易', config);
+  test('Acmebank 已取消交易 -> accounting', () => {
+    const r = classify('notify@acmebank.example', '已取消交易', config);
     assert.strictEqual(r.bucket, 'accounting');
   });
 
-  test('Mox 轉數成功 → accounting', () => {
-    const r = classify('notify@mox.com', '轉數成功', config);
+  test('Acmebank 轉數成功 -> accounting', () => {
+    const r = classify('notify@acmebank.example', '轉數成功', config);
     assert.strictEqual(r.bucket, 'accounting');
   });
 
-  test('Mox 成功入錢 → accounting', () => {
-    const r = classify('notify@mox.com', '成功入錢至你在Mox 的戶口', config);
+  test('Acmebank 成功入錢 -> accounting', () => {
+    const r = classify('notify@acmebank.example', '成功入錢至你在Acme 的戶口', config);
     assert.strictEqual(r.bucket, 'accounting');
   });
 
-  test('Mox 設立分期並繳款 → accounting (payment event, not marketing)', () => {
-    const r = classify('notify@mox.com', '你已成功設立分期及繳交你的月結單結欠', config);
+  test('Acmebank 設立分期並繳款 -> accounting (payment event, not marketing)', () => {
+    const r = classify('notify@acmebank.example', '你已成功設立分期及繳交你的月結單結欠', config);
     assert.strictEqual(r.bucket, 'accounting');
-    assert.strictEqual(r.ruleId, 'mox-instalment');
+    assert.strictEqual(r.ruleId, 'acmebank-instalment');
   });
 
-  test('Ant Bank PayLater payment → accounting', () => {
-    const r = classify('hk_antbank_service@notify.antbank.hk', 'PayLater 付款成功 (PayLater Payment Successful)', config);
+  test('Microbank PayLater payment -> accounting', () => {
+    const r = classify('svc@notify.microbank.example.hk', 'PayLater 付款成功 (PayLater Payment Successful)', config);
     assert.strictEqual(r.bucket, 'accounting');
   });
 
-  test('Ant Bank login → notifications', () => {
-    const r = classify('hk_antbank_service@notify.antbank.hk', '新登入通知', config);
+  test('Microbank transfer -> accounting', () => {
+    const r = classify('svc@notify.microbank.example.hk', '轉賬成功', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('Megabank payment -> accounting', () => {
+    const r = classify('BANK@notification.megabank.example.hk', '支付通知 Ref:[D0000000001]', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('Megabank credit card transaction -> accounting', () => {
+    const r = classify('BANK@notification.megabank.example.hk', 'Credit Card Transaction Notification', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('Walletco receipt -> accounting', () => {
+    const r = classify('service@walletco.example.hk', '你付款給 Domainly, Inc 的收據', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('Tollgate transaction -> accounting', () => {
+    const r = classify('do-not-reply@tollgate.example.hk', '易通行交易通知', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('Tollgate 繳費通知 -> notifications (payment reminder, not a transaction)', () => {
+    const r = classify('do-not-reply@tollgate.example.hk', '易通行繳費通知', config);
+    assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.ruleId, 'tollgate-reminder');
+  });
+
+  test('Starbank bill payment -> accounting', () => {
+    const r = classify('ebanking@starbank.example', '已執行繳費交易', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('Burgerjoint order -> accounting', () => {
+    const r = classify('noreply@burgerjoint.example', '手機訂單確認', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('QuickPay receive -> accounting', () => {
+    const r = classify('Support@quickpay.example', 'Receive Money via QuickPay', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('QuickPay 收款 -> accounting', () => {
+    const r = classify('Support@quickpay.example', '收款通知書 – QuickPay', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('FastPay transfer -> accounting', () => {
+    const r = classify('some@fastpay.megabank.example.hk', '成功轉賬至銀行！', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('Unionbank transfer -> accounting', () => {
+    const r = classify('some@unionbank.example', '你已成功轉賬(未登記收款人)', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('Megabank Receipt of inward payment -> accounting', () => {
+    const r = classify('BANK@notification.megabank.example.hk', 'Receipt of an inward payment to your credit card account', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('Megabank 已繳付信用卡 -> accounting', () => {
+    const r = classify('BANK@notification.megabank.example.hk', '您已繳付信用卡款項 Ref:[Z2S00000001]', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('Starbank Card-Not-Present -> accounting', () => {
+    const r = classify('ebanking@starbank.example', 'Starbank: Card-Not-Present Successful Transaction Alert', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('Microbank 支付成功 -> accounting', () => {
+    const r = classify('svc@notify.microbank.example.hk', '支付成功', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('QuickPay Send Money -> accounting', () => {
+    const r = classify('OnlineBanking@quickpay.example', 'Send Money via QuickPay – Receipt No. 2602-000000000001', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  test('SaaSCo receipt -> accounting', () => {
+    const r = classify('receipts@saasco.example', 'Your receipt [#1111-2222]', config);
+    assert.strictEqual(r.bucket, 'accounting');
+  });
+
+  // --- Notifications parity checks ---
+
+  test('Devtools -> notifications', () => {
+    const r = classify('account-security@devtools.example', 'New sign-in detected', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('Ant Bank transfer → accounting', () => {
-    const r = classify('hk_antbank_service@notify.antbank.hk', '轉賬成功', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('Ant Bank 還款提醒 → notifications', () => {
-    const r = classify('hk_antbank_service@notify.antbank.hk', 'PayLater 還款提醒', config);
+  test('Codehub -> notifications', () => {
+    const r = classify('noreply@codehub.example', '[Codehub] Please review this sign in', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('HSBC payment → accounting', () => {
-    const r = classify('HSBC@notification.hsbc.com.hk', '支付通知 Ref:[D0000000001]', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('HSBC transfer credit → accounting', () => {
-    const r = classify('HSBC@notification.hsbc.com.hk', 'Fund transfer credit advice 轉賬存款通知書', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('HSBC credit card transaction → accounting', () => {
-    const r = classify('HSBC@notification.hsbc.com.hk', 'HSBC Credit Card Transaction Notification', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('PayPal receipt → accounting', () => {
-    const r = classify('service@paypal.com.hk', '你付款給 Domainly, Inc 的收據', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('HKeToll transaction → accounting', () => {
-    const r = classify('do-not-reply2@hketoll.gov.hk', '易通行交易通知', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('HKeToll 繳費通知 → notifications (payment reminder, not a transaction)', () => {
-    const r = classify('do-not-reply2@hketoll.gov.hk', '易通行繳費通知', config);
-    assert.strictEqual(r.bucket, 'notifications');
-    assert.strictEqual(r.ruleId, 'hketoll-reminder');
-  });
-
-  test('HKeToll 交易通知 → accounting', () => {
-    const r = classify('do-not-reply2@hketoll.gov.hk', '易通行交易通知', config);
-    assert.strictEqual(r.bucket, 'accounting');
-    assert.strictEqual(r.ruleId, 'hketoll-tx');
-  });
-
-  test('Dah Sing bill payment → accounting', () => {
-    const r = classify('ebanking@dahsing.com', '已執行繳費交易', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('Dah Sing login → notifications', () => {
-    const r = classify('ebanking@dahsing.com', '登入大新網上理財或流動理財通知', config);
+  test('Cloudhost -> notifications', () => {
+    const r = classify('ship@cloudhost.example', 'Learn about multi-layer security', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('McDonald order → accounting', () => {
-    const r = classify('DoNotReply@mcdonalds.com', '麥當勞® - 手機訂單確認', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('SC Pay receive → accounting', () => {
-    const r = classify('Support.Smsbanking@sc.com', 'Receive Money via Standard Chartered Pay', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('SC Pay 收款 → accounting', () => {
-    const r = classify('Support.Smsbanking@sc.com', '收款通知書 – Standard Chartered Pay', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('SC Alerts payee → notifications', () => {
-    const r = classify('alerts@sc.com', 'New Payee Added', config);
+  test('Microbank login -> notifications', () => {
+    const r = classify('svc@notify.microbank.example.hk', '新登入通知', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('PayMe transfer → accounting', () => {
-    const r = classify('some@payme.hsbc.com.hk', '成功轉賬至銀行！', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('PayMe top-up → accounting', () => {
-    const r = classify('some@payme.hsbc.com.hk', '您已增值您的PayMe賬戶', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('Hang Seng transfer → accounting', () => {
-    const r = classify('some@hangseng.com', '你已成功轉賬(未登記收款人)', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('Microsoft sign-in → notifications', () => {
-    const r = classify('account-security-noreply@accountprotection.microsoft.com', 'New sign-in detected', config);
+  test('Microbank 還款提醒 -> notifications', () => {
+    const r = classify('svc@notify.microbank.example.hk', 'PayLater 還款提醒', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('GitHub → notifications', () => {
-    const r = classify('noreply@github.com', '[GitHub] Please review this sign in', config);
+  test('QuickPay Payee -> notifications', () => {
+    const r = classify('alerts@quickpay.example', 'New Payee Added', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('Vercel → notifications', () => {
-    const r = classify('ship@vercel.com', 'Learn about multi-layer security', config);
+  test('Acmebank 推薦共賞 -> notifications', () => {
+    const r = classify('info@mailer.acmebank.example', '有關Acme推薦共賞計劃修訂通知', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('OpenAI → notifications', () => {
-    const r = classify('noreply@email.openai.com', 'Introducing GPT-5.4', config);
+  test('Acmebank 新登入 -> notifications', () => {
+    const r = classify('notify@acmebank.example', '新登入位置', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('RunPod → notifications', () => {
-    const r = classify('noreply@gridform.example', 'Low Balance Warning', config);
+  test('FastPay 成功登入 -> notifications', () => {
+    const r = classify('no-reply@secure.fastpay.megabank.example.hk', '成功登入FastPay', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('HOMEISP → notifications', () => {
-    const r = classify('custserv@homeisp.example.hk', 'HOMEISP SHiELD daily report', config);
+  test('Megabank 外匯展望 -> notifications', () => {
+    const r = classify('notifications@messaging.megabank.example.hk', '外匯展望 - 2026年2月', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('Transitpay → notifications', () => {
-    const r = classify('some@transitpay.example.hk', '捷通卡App - 生物認證經已啟用', config);
+  test('Starbank MyAuto -> notifications', () => {
+    const r = classify('ebanking@starbank.example', '【Starbank MyAuto 車主信用卡】最新駕駛資訊', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('MallPoints → notifications', () => {
-    const r = classify('some@mallpoints.example.hk', 'MallPoints積分到期提示', config);
+  test('Unionbank 數碼理財 -> notifications', () => {
+    const r = classify('notification@messages.unionbank.example', '數碼理財恒簡單 | 4大轉賬常見疑難', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('HSBC 信用卡付款提示 → notifications (bill-due reminder, not a transaction)', () => {
-    const r = classify('hsbc@informationservices.hsbc.com.hk', '您的信用卡付款提示 Ref:[X0000000001]', config);
-    assert.strictEqual(r.bucket, 'notifications');
-    assert.strictEqual(r.ruleId, 'hsbc-card-due');
-  });
-
-  test('HSBC Receipt of inward payment → accounting', () => {
-    const r = classify('HSBC@notification.hsbc.com.hk', 'Receipt of an inward payment to your credit card account', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('HSBC 已繳付信用卡 → accounting', () => {
-    const r = classify('HSBC@notification.hsbc.com.hk', '您已繳付信用卡款項 Ref:[Z2S00000001]', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('Dah Sing Card-Not-Present → accounting', () => {
-    const r = classify('ebanking@dahsing.com', 'Dah Sing Bank: Card-Not-Present Successful Transaction Alert', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('Ant Bank 支付成功 → accounting', () => {
-    const r = classify('hk_antbank_service@notify.antbank.hk', '支付成功', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('SC Pay Send Money → accounting', () => {
-    const r = classify('OnlineBanking.HK@sc.com', 'Send Money via Standard Chartered Pay – Receipt No. 2602-000000000001', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('PayPal 提交 → accounting', () => {
-    const r = classify('service@paypal.com.hk', '你已提交向 GLOBALTEL COMMUNICATION... 提交金額為 $12.00 USD 的訂單', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('Bowtie Payment Successful → accounting', () => {
-    const r = classify('info@notifications.bowtie.com.hk', '[ Payment Successful ] Premium well received', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('Nimbus AI receipt → accounting', () => {
-    const r = classify('receipts@nimbus-ai.example', 'Your Nimbus AI, Inc receipt [#1111-2222]', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('Anthropic receipt → accounting', () => {
-    const r = classify('invoice+statements@modelworks.example', 'Your receipt from Modelworks, PBC #1111-2222-3333', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('Vaultline receipt → accounting', () => {
-    const r = classify('receipts@vaultline.example', 'Your Vaultline c/o Meridian Apps Inc. receipt [#5555-6666]', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('GlobalTel 引き落とし → notifications (no amount in email, nothing to book)', () => {
-    const r = classify('billing@globaltel-hk.example', '【GlobalTel】ご利用料金のお引き落としが完了いたしました', config);
-    assert.strictEqual(r.bucket, 'notifications');
-    assert.strictEqual(r.ruleId, 'globaltel-notif');
-  });
-
-  test('Stripe/Gridform receipt → accounting', () => {
-    const r = classify('receipts+acct_1ABCDEFGHIJKLMNO@stripe.com', 'Your Gridform receipt [#3333-4444]', config);
-    assert.strictEqual(r.bucket, 'accounting');
-  });
-
-  test('Mox 推薦共賞 → notifications', () => {
-    const r = classify('info@mailer.mox.com', '有關Mox推薦共賞計劃修訂通知', config);
+  test('Socialnet -> notifications', () => {
+    const r = classify('security@socialnet.example', '123456 is your security code', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('Mox 騙局 → notifications', () => {
-    const r = classify('info@mailer.mox.com', '最新騙局大流行，即睇免中招', config);
+  test('QuickPay 防騙 -> notifications', () => {
+    const r = classify('communications@quickpay.example', '安心迎新年，防騙要留神', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  test('Mox 新登入 → notifications', () => {
-    const r = classify('notify@mox.com', '新登入位置', config);
+  test('Megabank 信用卡付款提示 -> notifications (bill-due reminder, not a transaction)', () => {
+    const r = classify('info@informationservices.megabank.example.hk', '您的信用卡付款提示 Ref:[X0000000001]', config);
     assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.ruleId, 'megabank-card-due');
   });
 
-  test('Mox 月結單 → null (stays in inbox)', () => {
-    const r = classify('notify@mox.com', '已發出本月份Mox戶口月結單', config);
+  // --- Null (stays in inbox) ---
+
+  test('Acmebank 月結單 -> null (stays in inbox)', () => {
+    const r = classify('notify@acmebank.example', '已發出本月份Acme戶口月結單', config);
     assert.strictEqual(r.bucket, null);
   });
 
-  test('Mox 賬單到期 → null (stays in inbox)', () => {
-    const r = classify('notify@mox.com', '你的Mox Credit 賬單將於 2026年2月11日到期', config);
-    assert.strictEqual(r.bucket, null);
-  });
-
-  test('PayMe 成功登入 → notifications', () => {
-    const r = classify('no-reply@secure-app.payme.hsbc.com.hk', '成功登入PayMe', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('PayMe 信用卡已連結 → notifications', () => {
-    const r = classify('no-reply@secure-app.payme.hsbc.com.hk', '您的信用卡已連結至 PayMe！', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('HSBC 外匯展望 → notifications', () => {
-    const r = classify('hsbc.notifications@messaging.hsbc.com.hk', '外匯展望 - 2026年2月', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('Dah Sing MyAuto → notifications', () => {
-    const r = classify('ebanking@dahsing.com', '【大新 MyAuto 車主信用卡】最新駕駛資訊', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('Dah Sing e-Statement → null (stays in inbox)', () => {
-    const r = classify('ebanking@dahsing.com', 'Credit Card e-Statement (Feb, 2026)', config);
-    assert.strictEqual(r.bucket, null);
-  });
-
-  test('Dah Sing Payment Due → null (stays in inbox)', () => {
-    const r = classify('ebanking@dahsing.com', 'Dah Sing Credit Card Payment Due Date Reminder', config);
-    assert.strictEqual(r.bucket, null);
-  });
-
-  test('Hang Seng 數碼理財 → notifications', () => {
-    const r = classify('notification@messages.hangseng.com', '數碼理財恒簡單 | 4大轉賬常見疑難', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('Hang Seng e-Statement → null (stays in inbox)', () => {
-    const r = classify('e-alert@mail.hangseng.com', '你的最新e-Statement / e-Advice已準備好', config);
-    assert.strictEqual(r.bucket, null);
-  });
-
-  test('SC 防騙 → notifications', () => {
-    const r = classify('communications@hk.sc.com', '安心迎新年，防騙要留神', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('Facebook → notifications', () => {
-    const r = classify('security@facebookmail.com', '123456 is your Facebook security code', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('CoinPort → notifications', () => {
-    const r = classify('donotreply@notification.coinport.example', 'Get limited time HKD reward', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('致富CHIEF → notifications', () => {
-    const r = classify('cs@brokerco.example.hk', '美國股票期權第三方收費調整通知', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('CarCo → notifications', () => {
-    const r = classify('CarCoHK@carco.example', 'CarCo 尚餘最後一批配額', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('SPAMSITE → notifications', () => {
-    const r = classify('promo@spamsite.example', '【SPAMSITE】Limited to Mar 3th!', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('EYEWEAR 88 → notifications', () => {
-    const r = classify('ecommerce@eyewear.example.hk', '您的眼鏡88積分已更新', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('SPORTSCLUB → notifications', () => {
-    const r = classify('customer.care@sportsclub.example.hk', '【香港賽馬會服務】修訂通知', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('Cloudflare → notifications', () => {
-    const r = classify('noreply@notify.cloudflare.com', 'my-site.example is now active', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('fooddash → notifications', () => {
-    const r = classify('rider@fooddash.example.hk', 'Lunar New Year Reactivation', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('SkyFly → notifications', () => {
-    const r = classify('noreply@e.skyfly.example', '你的26年2月賬戶概要', config);
-    assert.strictEqual(r.bucket, 'notifications');
-  });
-
-  test('Ivan Li newsletter → null (stays in inbox)', () => {
-    const r = classify('bingo@creatorly.example', '本週專欄更新', config);
-    assert.strictEqual(r.bucket, null);
-  });
-
-  test('unknown sender → null', () => {
+  test('unknown sender -> null', () => {
     const r = classify('random@example.com', 'Hello there', config);
     assert.strictEqual(r.bucket, null);
   });
 
-  // Case-insensitivity
+  // --- Case-insensitivity ---
+
   test('subject match is case-insensitive', () => {
-    const r = classify('receipts@nimbus-ai.example', 'YOUR RECEIPT', config);
+    const r = classify('receipts@saasco.example', 'YOUR RECEIPT', config);
     assert.strictEqual(r.bucket, 'accounting');
   });
 
   test('sender address is case-insensitive', () => {
-    const r = classify('NOREPLY@GITHUB.COM', 'test', config);
+    const r = classify('NOREPLY@CODEHUB.EXAMPLE', 'test', config);
     assert.strictEqual(r.bucket, 'notifications');
   });
 
-  // subjectExclude tests
-  test('subjectExclude blocks match: "Mox Card 交易被拒絕" does NOT match mox-tx', () => {
-    const r = classify('notify@mox.com', 'Mox Card 交易被拒絕', config);
-    // mox-tx has subjectExclude: 交易被拒絕, so it skips mox-tx
-    // No other rule for mox.com matches this subject
-    assert.notStrictEqual(r.ruleId, 'mox-tx');
+  // --- subjectExclude ---
+
+  test('subjectExclude blocks match: "Acme Card 交易被拒絕" does NOT match acmebank-tx', () => {
+    const r = classify('notify@acmebank.example', 'Acme Card 交易被拒絕', config);
+    assert.notStrictEqual(r.ruleId, 'acmebank-tx');
   });
 
   test('subjectExclude does not affect non-matching subjects', () => {
-    const r = classify('notify@mox.com', '取消交易通知', config);
+    const r = classify('notify@acmebank.example', '取消交易通知', config);
     assert.strictEqual(r.bucket, 'accounting');
-    assert.strictEqual(r.ruleId, 'mox-tx');
+    assert.strictEqual(r.ruleId, 'acmebank-tx');
+  });
+
+  // --- keep bucket ---
+
+  test('keep bucket rule matches', () => {
+    const r = classify('hello@vip-client.example', 'Important message', config);
+    assert.strictEqual(r.bucket, 'keep');
+    assert.strictEqual(r.ruleId, 'keep-vip');
+  });
+
+  test('keep bucket is never guarded', () => {
+    const r = classify('hello@vip-client.example', 'Payment declined notice', config);
+    assert.strictEqual(r.bucket, 'keep');
+    assert.strictEqual(r.guarded, false);
+  });
+
+  // --- probationUntil ---
+
+  test('active probation rule matches', () => {
+    const r = classify('info@newservice.example', 'Welcome', config);
+    assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.ruleId, 'newservice-active');
+  });
+
+  test('expired probation rule still matches (probation is metadata, not a filter)', () => {
+    const r = classify('info@oldservice.example', 'Update', config);
+    assert.strictEqual(r.bucket, 'notifications');
+    assert.strictEqual(r.ruleId, 'oldservice-expired');
   });
 });
 
@@ -597,20 +485,20 @@ describe('classify with fixture configs', () => {
   test('subjectExclude causes fallthrough to next matching rule', () => {
     const tmp = path.join(os.tmpdir(), 'exclude-fixture.json');
     fs.writeFileSync(tmp, JSON.stringify({
-      version: 1, guards: ['拒絕'],
+      version: 1, guards: ['被拒絕'],
       rules: [
-        { id: 'mox-tx', bucket: 'accounting', domains: ['mox.com'], subject: '交易|Mox Card', subjectExclude: '交易被拒絕' },
-        { id: 'mox-notif', bucket: 'notifications', domains: ['mox.com'], subject: '分期|設立|新登入' },
-        { id: 'mox-all', bucket: 'notifications', domains: ['mox.com'] }
+        { id: 'acme-tx', bucket: 'accounting', domains: ['acmebank.example'], subject: '交易|Acme Card', subjectExclude: '交易被拒絕' },
+        { id: 'acme-notif', bucket: 'notifications', domains: ['acmebank.example'], subject: '分期|設立|新登入' },
+        { id: 'acme-all', bucket: 'notifications', domains: ['acmebank.example'] }
       ]
     }));
     const cfg = loadRules(tmp);
 
-    // "Mox Card 交易被拒絕" — excluded from mox-tx, falls through to mox-all (domain catch-all)
-    const r = classify('notify@mox.com', 'Mox Card 交易被拒絕', cfg);
-    assert.strictEqual(r.ruleId, 'mox-all');
+    // "Acme Card 交易被拒絕" — excluded from acme-tx, falls through to acme-all (domain catch-all)
+    const r = classify('notify@acmebank.example', 'Acme Card 交易被拒絕', cfg);
+    assert.strictEqual(r.ruleId, 'acme-all');
     assert.strictEqual(r.bucket, 'notifications');
-    // guard "拒絕" should fire on the fallthrough rule
+    // guard "被拒絕" should fire on the fallthrough rule
     assert.strictEqual(r.guarded, true);
 
     fs.unlinkSync(tmp);
@@ -619,52 +507,33 @@ describe('classify with fixture configs', () => {
   test('ignoreGuards:true returns guarded:false despite guard words in subject', () => {
     const tmp = path.join(os.tmpdir(), 'ignoreguards-fixture.json');
     fs.writeFileSync(tmp, JSON.stringify({
-      version: 1, guards: ['失敗', '拒絕'],
+      version: 1, guards: ['失敗', '被拒絕'],
       rules: [
-        { id: 'antbank-fail', bucket: 'notifications', domains: ['antbank.hk'], subject: '還款失敗', ignoreGuards: true }
+        { id: 'microbank-fail', bucket: 'notifications', domains: ['microbank.example.hk'], subject: '還款失敗', ignoreGuards: true }
       ]
     }));
     const cfg = loadRules(tmp);
-    const r = classify('svc@notify.antbank.hk', '還款失敗通知', cfg);
+    const r = classify('svc@notify.microbank.example.hk', '還款失敗通知', cfg);
     assert.strictEqual(r.bucket, 'notifications');
-    assert.strictEqual(r.ruleId, 'antbank-fail');
+    assert.strictEqual(r.ruleId, 'microbank-fail');
     assert.strictEqual(r.guarded, false);
     fs.unlinkSync(tmp);
   });
 
-  test('ignoreGuards absent (default false) → guarded:true with guard word', () => {
+  test('ignoreGuards absent (default false) -> guarded:true with guard word', () => {
     const tmp = path.join(os.tmpdir(), 'no-ignoreguards-fixture.json');
     fs.writeFileSync(tmp, JSON.stringify({
       version: 1, guards: ['失敗'],
       rules: [
-        { id: 'antbank-notif', bucket: 'notifications', domains: ['antbank.hk'], subject: '還款' }
+        { id: 'microbank-notif', bucket: 'notifications', domains: ['microbank.example.hk'], subject: '還款' }
       ]
     }));
     const cfg = loadRules(tmp);
-    const r = classify('svc@notify.antbank.hk', '還款失敗', cfg);
+    const r = classify('svc@notify.microbank.example.hk', '還款失敗', cfg);
     assert.strictEqual(r.bucket, 'notifications');
-    assert.strictEqual(r.ruleId, 'antbank-notif');
+    assert.strictEqual(r.ruleId, 'microbank-notif');
     assert.strictEqual(r.guarded, true);
     fs.unlinkSync(tmp);
-  });
-});
-
-describe('classify real-config parity for subjectExclude', () => {
-  const config = loadRules(CONFIG_PATH);
-
-  test('Mox Card 交易被拒絕 does NOT return mox-tx/accounting', () => {
-    const r = classify('notify@mox.com', 'Mox Card 交易被拒絕', config);
-    // With only the exclude in place (no dedicated notifications rule for this yet),
-    // it should not be accounting/mox-tx
-    if (r.bucket !== null) {
-      assert.notStrictEqual(r.ruleId, 'mox-tx');
-    }
-  });
-
-  test('取消交易通知 still returns accounting mox-tx', () => {
-    const r = classify('notify@mox.com', '取消交易通知', config);
-    assert.strictEqual(r.bucket, 'accounting');
-    assert.strictEqual(r.ruleId, 'mox-tx');
   });
 });
 

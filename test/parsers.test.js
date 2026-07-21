@@ -159,7 +159,7 @@ describe('parseTransaction', () => {
   test('Stripe/Nimbus AI receipt', () => {
     const body = 'Receipt from Nimbus AI, Inc [#1111-2222] Amount paid $10.80 Date paid Mar 1, 2026';
     const result = parseTransaction(
-      'receipts@nimbus-ai.example',
+      'receipts+acct_2BCDEFGHIJKLMNOP@stripe.com',
       'Your Nimbus AI, Inc receipt [#1111-2222]',
       body,
       '2026-03-01T02:03:44Z'
@@ -184,7 +184,7 @@ describe('parseTransaction', () => {
   test('Stripe/Vaultline receipt', () => {
     const body = 'Receipt from Vaultline c/o Meridian Apps Inc. [#5555-6666] Amount paid $5.99 Date paid Feb 13, 2026';
     const result = parseTransaction(
-      'receipts@vaultline.example',
+      'receipts+acct_3CDEFGHIJKLMNOPQ@stripe.com',
       'Your Vaultline receipt',
       body,
       '2026-02-13T04:55:07Z'

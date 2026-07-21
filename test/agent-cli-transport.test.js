@@ -666,11 +666,14 @@ describe('call-site wiring', () => {
     const { _setAuditTransportForTesting, runFolderAudit } = await import('../src/agent/audit.js');
     _setAuditTransportForTesting(null);
 
+    const auditCfgPath = path.join(os.tmpdir(), `cli-transport-audit-cfg-${Date.now()}.json`);
+    fs.writeFileSync(auditCfgPath, JSON.stringify({ model: 'claude-sonnet-4-6' }));
+
     await runFolderAudit({
       dry: true,
       _agentDbPath: path.join(os.tmpdir(), `cli-transport-audit-${Date.now()}.db`),
       _outboxDir: path.join(os.tmpdir(), `cli-transport-audit-outbox-${Date.now()}`),
-      _agentConfigPath: undefined,
+      _agentConfigPath: auditCfgPath,
       _now: '2026-07-18T10:00:00Z',
       _graphGet: async (url) => {
         if (url.includes("displayName eq 'Accounting'")) return { value: [{ id: 'a' }] };
