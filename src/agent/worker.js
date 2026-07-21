@@ -1,4 +1,4 @@
-// MBA-side LLM worker — polls Mini queue via SSH, invokes local claude -p,
+// LLM worker — polls the daemon-side queue over SSH, invokes the local claude CLI,
 // writes results back atomically. All external effects injectable for testing.
 
 import { spawn } from 'node:child_process';
@@ -9,7 +9,7 @@ import os from 'node:os';
 const POLL_SLEEP = 15_000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AUTH_RE = /login|auth|credential|OAuth/i;
-const REMOTE_QUEUE = '~/outlook-cli/data/llm-queue';
+const REMOTE_QUEUE = '~/first-reader/data/llm-queue';
 
 // --- Production dependency implementations ---
 

@@ -3,7 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { PublicClientApplication } from '@azure/msal-node';
 
-const DEFAULT_CACHE_PATH = path.join(os.homedir(), '.outlook-cli', 'token-cache.json');
+const DEFAULT_CACHE_PATH = path.join(os.homedir(), '.first-reader', 'token-cache.json');
 
 export class TokenCache {
   constructor(cachePath = DEFAULT_CACHE_PATH) {

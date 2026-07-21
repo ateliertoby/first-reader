@@ -15,7 +15,7 @@ import { executeOps } from '../src/agent/ops.js';
 // --- Helpers ---
 
 function makeTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-recon-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-recon-'));
 }
 
 function writeRules(dir, extra = []) {

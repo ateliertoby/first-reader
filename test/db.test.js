@@ -9,7 +9,7 @@ describe('TransactionDB', () => {
   let tmpDir, db;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-test-'));
     db = new TransactionDB(path.join(tmpDir, 'test.db'));
   });
 

@@ -12,7 +12,7 @@ import { _setLLMTransportForTesting } from '../src/agent/llm.js';
 // --- Test helpers ---
 
 function makeTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-agent-report-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-agent-report-'));
 }
 
 function writeRules(dir, extra = []) {

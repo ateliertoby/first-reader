@@ -11,7 +11,7 @@ import { executeOps, _validateOp } from '../src/agent/ops.js';
 // --- Helpers ---
 
 function makeTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-audit-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-audit-'));
 }
 
 function writeAgentConfig(dir, overrides = {}) {

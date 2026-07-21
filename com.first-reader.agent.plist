@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.outlook-agent</string>
+    <string>com.first-reader.agent</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/YOURUSER/outlook-cli/bin/agent-loop.sh</string>
+        <string>/Users/YOURUSER/first-reader/bin/agent-loop.sh</string>
     </array>
     <key>KeepAlive</key>
     <true/>
@@ -16,8 +16,8 @@
     <key>ThrottleInterval</key>
     <integer>30</integer>
     <key>StandardOutPath</key>
-    <string>/Users/YOURUSER/outlook-cli/data/agent.log</string>
+    <string>/Users/YOURUSER/first-reader/data/agent.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/YOURUSER/outlook-cli/data/agent.log</string>
+    <string>/Users/YOURUSER/first-reader/data/agent.log</string>
 </dict>
 </plist>

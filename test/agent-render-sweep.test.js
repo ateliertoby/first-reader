@@ -10,7 +10,7 @@ import { AgentDB } from '../src/agent/db.js';
 // --- Helpers ---
 
 function makeTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-sweep-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-sweep-'));
 }
 
 function writeResult(queueDir, id, result) {

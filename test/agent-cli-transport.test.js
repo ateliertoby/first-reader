@@ -14,7 +14,7 @@ import {
 const FAST_POLL = 50; // ms — speed up file-based tests
 
 function makeTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-transport-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-transport-'));
 }
 
 function writeResult(queueDir, id, result) {

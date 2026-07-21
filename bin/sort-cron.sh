@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cron wrapper: truncate log + run sort
-LOG="$HOME/outlook-cli/data/sort.log"
+LOG="$HOME/first-reader/data/sort.log"
 MAX_LINES=2000
 
 # Truncate log if over limit
@@ -11,7 +11,7 @@ if [ -f "$LOG" ]; then
   fi
 fi
 
-cd "$HOME/outlook-cli"
+cd "$HOME/first-reader"
 source .env
 export AZURE_CLIENT_ID
 /opt/homebrew/bin/node bin/email sort

@@ -9,7 +9,7 @@ describe('TokenCache', () => {
   let tmpDir;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-test-'));
   });
 
   afterEach(() => {

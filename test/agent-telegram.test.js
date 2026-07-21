@@ -17,7 +17,7 @@ describe('TelegramChannel', () => {
   beforeEach(() => {
     originalFetch = globalThis.fetch;
     _setTelegramDelaysForTesting([0, 0]);
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-tg-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-tg-'));
   });
 
   afterEach(() => {

@@ -29,7 +29,7 @@ describe('runLoop', () => {
   let tmpDir;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-loop-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-loop-'));
   });
 
   afterEach(() => {

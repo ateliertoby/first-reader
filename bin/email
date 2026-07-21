@@ -193,7 +193,7 @@ program
 
 program
   .command('llm-worker')
-  .description('Run the MBA-side LLM worker (polls Mini queue, invokes local claude)')
+  .description('Run the LLM worker — polls the request queue, invokes the local claude CLI')
   .action(() => runWorker());
 
 program.parse();

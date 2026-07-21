@@ -25,7 +25,7 @@ describe('loadRules', () => {
 
   test('throws on missing file with bootstrap hint', () => {
     assert.throws(
-      () => loadRules('/tmp/nonexistent-outlook-cli-test/rules.json'),
+      () => loadRules('/tmp/nonexistent-first-reader-test/rules.json'),
       { message: /Copy config\/rules\.example\.json/ }
     );
   });

@@ -1,5 +1,5 @@
 // LLM queue transport — writes request files, polls for result files.
-// Worker (MBA side, M2) picks up requests and writes results via SSH.
+// A worker process picks up requests and writes results back via SSH.
 
 import fs from 'node:fs';
 import path from 'node:path';

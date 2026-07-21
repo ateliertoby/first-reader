@@ -4,7 +4,7 @@
 
 1. Go to https://portal.azure.com
 2. Search "App registrations" → New registration
-3. Name: "Outlook CLI"
+3. Name: "First Reader"
 4. Supported account types: "Personal Microsoft accounts only"
 5. Redirect URI: leave blank
 6. Click Register

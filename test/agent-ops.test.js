@@ -10,7 +10,7 @@ import { SortLogDB } from '../src/sorter/db.js';
 // --- Helpers ---
 
 function makeTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-ops-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-ops-'));
 }
 
 function writeRules(dir, rules = [], guards = ['urgent']) {

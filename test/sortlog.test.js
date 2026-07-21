@@ -9,7 +9,7 @@ describe('SortLogDB', () => {
   let tmpDir, db;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-sortlog-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-sortlog-'));
     db = new SortLogDB(path.join(tmpDir, 'test.db'));
   });
 

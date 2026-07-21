@@ -9,7 +9,7 @@ describe('AgentDB', () => {
   let tmpDir, db;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-agent-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-agent-'));
     db = new AgentDB(path.join(tmpDir, 'agent.db'));
   });
 

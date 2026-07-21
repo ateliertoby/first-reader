@@ -9,7 +9,7 @@ describe('loadAgentConfig', () => {
   let tmpDir;
 
   function writeConfig(obj) {
-    if (!tmpDir) tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-agentcfg-'));
+    if (!tmpDir) tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-agentcfg-'));
     const p = path.join(tmpDir, 'agent.json');
     fs.writeFileSync(p, JSON.stringify(obj));
     return p;
@@ -112,7 +112,7 @@ describe('loadAgentConfig', () => {
 
   test('missing file throws bootstrap message', () => {
     assert.throws(
-      () => loadAgentConfig('/tmp/nonexistent-outlook-cli-test/agent.json'),
+      () => loadAgentConfig('/tmp/nonexistent-first-reader-test/agent.json'),
       { message: /Copy config\/agent\.example\.json/ }
     );
   });
@@ -142,7 +142,7 @@ describe('requireEnv', () => {
 });
 
 test('renderModel defaults to model when absent, used when present', () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-cfg-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-cfg-'));
   const p = path.join(tmp, 'agent.json');
 
   fs.writeFileSync(p, JSON.stringify({ model: 'claude-sonnet-4-6' }));

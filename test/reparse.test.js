@@ -10,7 +10,7 @@ describe('reparse command', () => {
   let tmpDir, dbPath, logDb, txDb;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-reparse-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-reparse-'));
     dbPath = path.join(tmpDir, 'test.db');
     logDb = new SortLogDB(dbPath);
     txDb = new TransactionDB(dbPath);

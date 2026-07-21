@@ -8,7 +8,7 @@ import { AgentDB } from '../src/agent/db.js';
 import { _setIntentTransportForTesting } from '../src/agent/intent.js';
 
 function makeTmpDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'outlook-cli-handler-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-handler-'));
 }
 
 describe('createHandler', () => {
