@@ -1,0 +1,10 @@
+{
+  "model": "claude-sonnet-4-6",
+  "renderModel": "claude-opus-4-6",
+  "timezone": "America/New_York",
+  "idleHours": 24,
+  "renderDeadlineHours": 8,
+  "readBodyCap": 40,
+  "ownerName": "Alex",
+  "replyLanguage": "English"
+}

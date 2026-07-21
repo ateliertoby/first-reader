@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "settings": {
+    "minAgeHours": 6
+  },
+  "guards": [
+    "declined",
+    "failed",
+    "overdue",
+    "action required"
+  ],
+  "rules": [
+    {
+      "id": "examplebank-tx",
+      "bucket": "accounting",
+      "domains": [
+        "examplebank.com"
+      ],
+      "subject": "transaction|payment|receipt"
+    },
+    {
+      "id": "newsletter-example",
+      "bucket": "notifications",
+      "domains": [
+        "newsletter.example.org"
+      ]
+    },
+    {
+      "id": "saas-billing",
+      "bucket": "accounting",
+      "domains": [
+        "billing.examplecloud.io"
+      ],
+      "subject": "invoice|receipt",
+      "subjectExclude": "upcoming|scheduled",
+      "ignoreGuards": false,
+      "probationUntil": "2099-01-01"
+    },
+    {
+      "id": "keep-client",
+      "bucket": "keep",
+      "domains": [
+        "importantclient.example.com"
+      ]
+    }
+  ]
+}
