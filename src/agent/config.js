@@ -28,7 +28,7 @@ export function loadAgentConfig(configPath) {
     timezone: cfg.timezone ?? 'Asia/Hong_Kong',
     idleHours: typeof cfg.idleHours === 'number' && cfg.idleHours > 0 ? cfg.idleHours : 24,
     renderDeadlineHours: typeof cfg.renderDeadlineHours === 'number' && cfg.renderDeadlineHours > 0 ? cfg.renderDeadlineHours : 8,
-    freshLookbackHours: typeof cfg.freshLookbackHours === 'number' && cfg.freshLookbackHours > 0 ? cfg.freshLookbackHours : 12,
+    readBodyCap: typeof cfg.readBodyCap === 'number' && cfg.readBodyCap > 0 ? cfg.readBodyCap : 40,
   };
 }
 

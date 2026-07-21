@@ -33,11 +33,11 @@ function writeNotes(dir, content) {
 
 const MINIMAL_REPORT = {
   window: { start: '2026-07-17T08:00:00Z', end: '2026-07-18T08:00:00Z' },
-  sort: { moved: [], guardBlocked: [], noparse: [], unsorted: [], runErrors: [], kept: [], summary: { keptRuleCount: 0, pinnedCount: 0 } },
+  emails: [],
+  sortActivity: { moved: [], guardBlocked: [], noparse: [], unsorted: [], runErrors: [], summary: { keptRuleCount: 0, pinnedCount: 0 } },
   reminders: [],
   questions: [],
   junk: [],
-  fresh: [],
 };
 
 function makeSweepDeps(tmpDir, overrides = {}) {

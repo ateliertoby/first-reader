@@ -84,6 +84,20 @@ export class AgentDB {
       )
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_state (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      )
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS agent_seen (
+        internet_message_id TEXT PRIMARY KEY,
+        seen_at TEXT NOT NULL
+      )
+    `);
+
     // Questions
     this._addQuestion = this.db.prepare(`
       INSERT INTO agent_questions (asked_at, domain, question, status)
@@ -164,6 +178,25 @@ export class AgentDB {
     );
     this._completePending = this.db.prepare(
       `UPDATE pending_renders SET status = @status, completed_at = @completed_at WHERE id = @id`
+    );
+
+    // State KV
+    this._getState = this.db.prepare(
+      `SELECT value FROM agent_state WHERE key = @key`
+    );
+    this._setState = this.db.prepare(
+      `INSERT OR REPLACE INTO agent_state (key, value) VALUES (@key, @value)`
+    );
+
+    // Seen (dedupe by internetMessageId)
+    this._markSeen = this.db.prepare(
+      `INSERT OR IGNORE INTO agent_seen (internet_message_id, seen_at) VALUES (@id, @ts)`
+    );
+    this._isSeen = this.db.prepare(
+      `SELECT 1 FROM agent_seen WHERE internet_message_id = @id LIMIT 1`
+    );
+    this._pruneSeen = this.db.prepare(
+      `DELETE FROM agent_seen WHERE seen_at < @cutoff`
     );
   }
 
@@ -300,6 +333,60 @@ export class AgentDB {
       throw new Error(`Invalid pending status: ${status}`);
     }
     this._completePending.run({ id, status, completed_at: completedAt });
+  }
+
+  // --- State KV ---
+
+  getState(key) {
+    return this._getState.get({ key })?.value ?? null;
+  }
+
+  setState(key, value) {
+    this._setState.run({ key, value });
+  }
+
+  // --- Seen dedupe ---
+
+  markSeen(internetMessageId, now) {
+    this._markSeen.run({ id: internetMessageId, ts: now });
+  }
+
+  isSeen(internetMessageId) {
+    return !!this._isSeen.get({ id: internetMessageId });
+  }
+
+  pruneSeen(now) {
+    const cutoff = _subtractDays(now, 14);
+    return this._pruneSeen.run({ cutoff }).changes;
+  }
+
+  // Atomically advance read_watermark, insert pending render, and record seen
+  // entries.  If anything throws the transaction rolls back — the watermark
+  // stays put and the next assemble re-fetches the same window.
+  insertPendingWithWatermark({ pending, watermark, seen }) {
+    this.db.transaction(() => {
+      // null watermark = do not advance (partial scan — window stays open
+      // for a re-read; seen entries below keep the re-read deduplicated)
+      if (watermark != null) {
+        this._setState.run({ key: 'read_watermark', value: watermark });
+      }
+      if (!VALID_PENDING_STATUSES.has(pending.status)) {
+        throw new Error(`Invalid pending status: ${pending.status}`);
+      }
+      this._insertPending.run({
+        created_at: pending.created_at,
+        origin: pending.origin,
+        window_start: pending.window_start,
+        window_end: pending.window_end,
+        request_id: pending.request_id,
+        report_json: pending.report_json,
+        enqueue_count: 1,
+        status: pending.status,
+      });
+      for (const entry of seen) {
+        this._markSeen.run({ id: entry.id, ts: entry.ts });
+      }
+    })();
   }
 
   close() {

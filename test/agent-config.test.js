@@ -25,14 +25,14 @@ describe('loadAgentConfig', () => {
   test('loads valid config with all fields', () => {
     const p = writeConfig({
       model: 'claude-sonnet-5', timezone: 'Asia/Hong_Kong',
-      idleHours: 12, renderDeadlineHours: 4, freshLookbackHours: 6
+      idleHours: 12, renderDeadlineHours: 4, readBodyCap: 50
     });
     const cfg = loadAgentConfig(p);
     assert.strictEqual(cfg.model, 'claude-sonnet-5');
     assert.strictEqual(cfg.timezone, 'Asia/Hong_Kong');
     assert.strictEqual(cfg.idleHours, 12);
     assert.strictEqual(cfg.renderDeadlineHours, 4);
-    assert.strictEqual(cfg.freshLookbackHours, 6);
+    assert.strictEqual(cfg.readBodyCap, 50);
   });
 
   test('applies defaults for missing optional fields', () => {
@@ -41,7 +41,7 @@ describe('loadAgentConfig', () => {
     assert.strictEqual(cfg.timezone, 'Asia/Hong_Kong');
     assert.strictEqual(cfg.idleHours, 24);
     assert.strictEqual(cfg.renderDeadlineHours, 8);
-    assert.strictEqual(cfg.freshLookbackHours, 12);
+    assert.strictEqual(cfg.readBodyCap, 40);
   });
 
   test('throws on missing model', () => {
@@ -84,9 +84,9 @@ describe('loadAgentConfig', () => {
     assert.strictEqual(loadAgentConfig(p).renderDeadlineHours, 8);
   });
 
-  test('non-positive freshLookbackHours falls back to default 12', () => {
-    const p = writeConfig({ model: 'claude-sonnet-5', freshLookbackHours: 0 });
-    assert.strictEqual(loadAgentConfig(p).freshLookbackHours, 12);
+  test('non-positive readBodyCap falls back to default 40', () => {
+    const p = writeConfig({ model: 'claude-sonnet-5', readBodyCap: 0 });
+    assert.strictEqual(loadAgentConfig(p).readBodyCap, 40);
   });
 
   test('non-number idleHours falls back to default', () => {
@@ -99,7 +99,7 @@ describe('loadAgentConfig', () => {
     assert.strictEqual(cfg.model, 'claude-sonnet-4-6');
     assert.strictEqual(cfg.idleHours, 24);
     assert.strictEqual(cfg.renderDeadlineHours, 8);
-    assert.strictEqual(cfg.freshLookbackHours, 12);
+    assert.strictEqual(cfg.readBodyCap, 40);
   });
 });
 

@@ -18,10 +18,10 @@ describe('AgentDB', () => {
     fs.rmSync(tmpDir, { recursive: true });
   });
 
-  test('creates all five tables on init', () => {
+  test('creates all tables on init', () => {
     const tables = db.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
     const names = tables.map(t => t.name);
-    for (const expected of ['agent_questions', 'agent_reminders', 'junk_dismissed', 'agent_engagement', 'agent_runs']) {
+    for (const expected of ['agent_questions', 'agent_reminders', 'junk_dismissed', 'agent_engagement', 'agent_runs', 'pending_renders', 'agent_state', 'agent_seen']) {
       assert.ok(names.includes(expected), `missing table: ${expected}`);
     }
   });
@@ -319,6 +319,96 @@ describe('AgentDB', () => {
       assert.throws(() => db.lastRun('invalid'), {
         message: /Invalid run kind: invalid/
       });
+    });
+  });
+
+  // --- State KV ---
+
+  describe('state KV', () => {
+    test('getState returns null for missing key', () => {
+      assert.strictEqual(db.getState('nonexistent'), null);
+    });
+
+    test('setState + getState round-trip', () => {
+      db.setState('read_watermark', '2026-07-18T08:00:00Z');
+      assert.strictEqual(db.getState('read_watermark'), '2026-07-18T08:00:00Z');
+    });
+
+    test('setState overwrites existing value', () => {
+      db.setState('read_watermark', '2026-07-17T00:00:00Z');
+      db.setState('read_watermark', '2026-07-18T08:00:00Z');
+      assert.strictEqual(db.getState('read_watermark'), '2026-07-18T08:00:00Z');
+    });
+  });
+
+  // --- Seen dedupe ---
+
+  describe('seen dedupe', () => {
+    test('isSeen returns false for unknown', () => {
+      assert.strictEqual(db.isSeen('inet-unknown'), false);
+    });
+
+    test('markSeen + isSeen round-trip', () => {
+      db.markSeen('inet-001', '2026-07-18T08:00:00Z');
+      assert.strictEqual(db.isSeen('inet-001'), true);
+    });
+
+    test('markSeen is idempotent (OR IGNORE)', () => {
+      db.markSeen('inet-001', '2026-07-18T08:00:00Z');
+      db.markSeen('inet-001', '2026-07-18T09:00:00Z');
+      assert.strictEqual(db.isSeen('inet-001'), true);
+    });
+
+    test('pruneSeen removes entries older than 14 days', () => {
+      db.markSeen('inet-old', '2026-07-01T00:00:00Z');
+      db.markSeen('inet-recent', '2026-07-18T00:00:00Z');
+      const pruned = db.pruneSeen('2026-07-18T08:00:00Z');
+      assert.strictEqual(pruned, 1);
+      assert.strictEqual(db.isSeen('inet-old'), false);
+      assert.strictEqual(db.isSeen('inet-recent'), true);
+    });
+  });
+
+  // --- Atomic watermark + pending + seen ---
+
+  describe('insertPendingWithWatermark', () => {
+    test('atomically sets watermark, inserts pending, and records seen', () => {
+      db.insertPendingWithWatermark({
+        pending: {
+          created_at: '2026-07-18T08:30:00Z', origin: 'check',
+          window_start: '2026-07-17T08:30:00Z', window_end: '2026-07-18T08:15:00Z',
+          request_id: 'req-1', report_json: '{}', status: 'open',
+        },
+        watermark: '2026-07-18T08:15:00Z',
+        seen: [
+          { id: 'inet-a', ts: '2026-07-18T08:30:00Z' },
+          { id: 'inet-b', ts: '2026-07-18T08:30:00Z' },
+        ],
+      });
+
+      assert.strictEqual(db.getState('read_watermark'), '2026-07-18T08:15:00Z');
+      assert.strictEqual(db.openPendings().length, 1);
+      assert.strictEqual(db.isSeen('inet-a'), true);
+      assert.strictEqual(db.isSeen('inet-b'), true);
+    });
+
+    test('rolls back entirely on invalid pending status', () => {
+      assert.throws(() => {
+        db.insertPendingWithWatermark({
+          pending: {
+            created_at: '2026-07-18T08:30:00Z', origin: 'check',
+            window_start: '2026-07-17T08:30:00Z', window_end: '2026-07-18T08:15:00Z',
+            request_id: 'req-bad', report_json: '{}', status: 'invalid',
+          },
+          watermark: '2026-07-18T08:15:00Z',
+          seen: [{ id: 'inet-c', ts: '2026-07-18T08:30:00Z' }],
+        });
+      });
+
+      // All rolled back
+      assert.strictEqual(db.getState('read_watermark'), null);
+      assert.strictEqual(db.openPendings().length, 0);
+      assert.strictEqual(db.isSeen('inet-c'), false);
     });
   });
 });
