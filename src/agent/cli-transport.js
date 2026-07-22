@@ -168,7 +168,7 @@ function pollForResult(resDir, id, timeoutMs, pollMs) {
   });
 }
 
-export async function callCliLLM({ kind, system, user, tools, model, timeoutMs, _queueDir, _pollIntervalMs } = {}) {
+export async function callCliLLM({ kind, system, user, tools, model, workerName = 'worker', timeoutMs, _queueDir, _pollIntervalMs } = {}) {
   const queueDir = _queueDir ?? DEFAULT_QUEUE_DIR;
   const resDir = path.join(queueDir, 'results');
   const timeout = timeoutMs ?? KIND_TIMEOUTS[kind] ?? 3 * 60_000;
@@ -186,7 +186,7 @@ export async function callCliLLM({ kind, system, user, tools, model, timeoutMs, 
 
   if (!result.ok) {
     const err = new Error(result.error === 'auth_expired'
-      ? 'MBA claude login 過期咗'
+      ? `${workerName} claude login 過期咗`
       : `LLM queue error: ${result.error}${result.detail ? ` — ${result.detail}` : ''}`);
     err.code = result.error;
     throw err;
@@ -215,7 +215,7 @@ export async function callCliLLM({ kind, system, user, tools, model, timeoutMs, 
 
   if (!retryResult.ok) {
     const err = new Error(retryResult.error === 'auth_expired'
-      ? 'MBA claude login 過期咗'
+      ? `${workerName} claude login 過期咗`
       : `LLM queue error on retry: ${retryResult.error}${retryResult.detail ? ` — ${retryResult.detail}` : ''}`);
     err.code = retryResult.error;
     throw err;

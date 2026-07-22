@@ -26,7 +26,7 @@ describe('loadAgentConfig', () => {
     const p = writeConfig({
       model: 'claude-sonnet-5', timezone: 'Asia/Hong_Kong',
       idleHours: 12, renderDeadlineHours: 4, readBodyCap: 50,
-      ownerName: 'Alex', replyLanguage: 'French'
+      ownerName: 'Alex', workerName: 'macbook air', replyLanguage: 'French'
     });
     const cfg = loadAgentConfig(p);
     assert.strictEqual(cfg.model, 'claude-sonnet-5');
@@ -35,6 +35,7 @@ describe('loadAgentConfig', () => {
     assert.strictEqual(cfg.renderDeadlineHours, 4);
     assert.strictEqual(cfg.readBodyCap, 50);
     assert.strictEqual(cfg.ownerName, 'Alex');
+    assert.strictEqual(cfg.workerName, 'macbook air');
     assert.strictEqual(cfg.replyLanguage, 'French');
   });
 
@@ -46,6 +47,7 @@ describe('loadAgentConfig', () => {
     assert.strictEqual(cfg.renderDeadlineHours, 8);
     assert.strictEqual(cfg.readBodyCap, 40);
     assert.strictEqual(cfg.ownerName, 'the user');
+    assert.strictEqual(cfg.workerName, 'worker');
     assert.strictEqual(cfg.replyLanguage, 'English');
   });
 
@@ -99,6 +101,21 @@ describe('loadAgentConfig', () => {
     assert.strictEqual(loadAgentConfig(p).idleHours, 24);
   });
 
+  test('empty workerName falls back to default', () => {
+    const p = writeConfig({ model: 'claude-sonnet-5', workerName: '' });
+    assert.strictEqual(loadAgentConfig(p).workerName, 'worker');
+  });
+
+  test('whitespace-only workerName falls back to default', () => {
+    const p = writeConfig({ model: 'claude-sonnet-5', workerName: '   ' });
+    assert.strictEqual(loadAgentConfig(p).workerName, 'worker');
+  });
+
+  test('non-string workerName falls back to default', () => {
+    const p = writeConfig({ model: 'claude-sonnet-5', workerName: 42 });
+    assert.strictEqual(loadAgentConfig(p).workerName, 'worker');
+  });
+
   test('loads config/agent.example.json via explicit path', () => {
     const examplePath = path.join(import.meta.dirname, '..', 'config', 'agent.example.json');
     const cfg = loadAgentConfig(examplePath);
@@ -107,6 +124,7 @@ describe('loadAgentConfig', () => {
     assert.strictEqual(cfg.renderDeadlineHours, 8);
     assert.strictEqual(cfg.readBodyCap, 40);
     assert.strictEqual(cfg.ownerName, 'Alex');
+    assert.strictEqual(cfg.workerName, 'worker');
     assert.strictEqual(cfg.replyLanguage, 'English');
   });
 

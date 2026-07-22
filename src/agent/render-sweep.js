@@ -205,7 +205,7 @@ export async function runSweep({
         } else {
           // ok:false
           if (result.error === 'auth_expired') {
-            await doDegradedCompletion(row, 'MBA claude login 過期咗', completionDeps);
+            await doDegradedCompletion(row, `${config.workerName} claude login 過期咗`, completionDeps);
             cleanupQueueFiles(row.request_id, queueDir);
           } else {
             // Other error — re-enqueue (cap 3)
@@ -231,7 +231,7 @@ export async function runSweep({
           }
         } else if (ageMs > 2 * 60_000 && !row.interim_notified && row.origin === 'check') {
           // 2min interim for user-triggered checks — let the owner know the worker may be offline
-          writeOutbox(outboxDir, 'LLM 未接工（MBA 可能瞓咗），醒返即補', now);
+          writeOutbox(outboxDir, `LLM 未接工（${config.workerName} 可能瞓咗），醒返即補`, now);
           await drainOutbox();
           agentDb.setInterimNotified(row.id);
         }

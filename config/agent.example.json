@@ -6,5 +6,6 @@
   "renderDeadlineHours": 8,
   "readBodyCap": 40,
   "ownerName": "Alex",
+  "workerName": "worker",
   "replyLanguage": "English"
 }

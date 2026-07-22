@@ -52,7 +52,7 @@ function makeSweepDeps(tmpDir, overrides = {}) {
       notesPath: overrides.notesPath ?? path.join(tmpDir, 'agent-notes.md'),
       lastReportPath: overrides.lastReportPath ?? path.join(tmpDir, 'agent-last-report.json'),
       drainOutbox: overrides.drainOutbox ?? (async () => { drainCalls.push(1); }),
-      config: overrides.config ?? { model: 'claude-sonnet-5', renderDeadlineHours: 8 },
+      config: overrides.config ?? { model: 'claude-sonnet-5', renderDeadlineHours: 8, workerName: 'worker' },
       getNow: overrides.getNow ?? (() => '2026-07-18T10:00:00Z'),
     },
     drainCalls,
@@ -261,7 +261,7 @@ describe('render sweep', () => {
     assert.strictEqual(pending.status, 'degraded');
 
     const lastRun = agentDb.lastRun('report');
-    assert.ok(lastRun.detail.includes('MBA claude login'));
+    assert.ok(lastRun.detail.includes('claude login'));
 
     // Outbox written with degraded message
     const outboxFiles = fs.readdirSync(deps.outboxDir);
@@ -309,7 +309,7 @@ describe('render sweep', () => {
     const outboxFiles = fs.readdirSync(deps.outboxDir);
     assert.ok(outboxFiles.length > 0);
     const msg = JSON.parse(fs.readFileSync(path.join(deps.outboxDir, outboxFiles[0]), 'utf8'));
-    assert.ok(msg.text.includes('MBA'));
+    assert.ok(msg.text.includes('可能瞓咗'));
 
     // Drain called
     assert.ok(drainCalls.length > 0);
@@ -342,7 +342,7 @@ describe('render sweep', () => {
     const { deps, agentDb, cleanup } = makeSweepDeps(tmpDir, {
       // Created 9 hours ago (deadline is 8h)
       getNow: () => '2026-07-18T18:50:00Z',
-      config: { model: 'claude-sonnet-5', renderDeadlineHours: 8 },
+      config: { model: 'claude-sonnet-5', renderDeadlineHours: 8, workerName: 'worker' },
     });
 
     insertPending(agentDb, 'req-old', { created_at: '2026-07-18T09:50:00Z' });

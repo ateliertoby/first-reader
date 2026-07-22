@@ -1,4 +1,4 @@
-// Tests for src/agent/worker.js — MBA-side LLM worker (all deps mocked)
+// Tests for src/agent/worker.js — LLM worker (all deps mocked)
 
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert';

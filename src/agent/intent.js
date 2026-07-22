@@ -75,7 +75,7 @@ note_add — Add a note to agent memory
 - domains must be lowercase, contain a dot, no @`;
 }
 
-export async function parseIntent({ model, userText, context, ownerName, replyLanguage }) {
+export async function parseIntent({ model, userText, context, ownerName, replyLanguage, workerName }) {
   const systemParts = [buildIntentSystemPrompt(ownerName || 'the user', replyLanguage || 'English')];
   if (context?.notesContent) {
     systemParts.push(`\nAgent notes (working memory):\n${context.notesContent}`);
@@ -102,10 +102,10 @@ export async function parseIntent({ model, userText, context, ownerName, replyLa
     return _testTransport({ model, system, user });
   }
 
-  return callCliLLM({ kind: 'intent', system, user, model });
+  return callCliLLM({ kind: 'intent', system, user, model, workerName });
 }
 
-export async function runDeepVerify({ model, claim, context }) {
+export async function runDeepVerify({ model, claim, context, workerName }) {
   const system = `You are verifying a claim about an email. Search the web to find evidence supporting or refuting it. Report your findings with sources. If you cannot verify, say so honestly.
 
 IRON RULE: You are ONLY verifying — never suggest or perform any action on emails.`;
@@ -116,5 +116,5 @@ IRON RULE: You are ONLY verifying — never suggest or perform any action on ema
     return _testDeepVerifyTransport({ model, system, user, claim });
   }
 
-  return callCliLLM({ kind: 'deep_verify', system, user, tools: ['WebSearch'], model });
+  return callCliLLM({ kind: 'deep_verify', system, user, tools: ['WebSearch'], model, workerName });
 }

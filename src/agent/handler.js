@@ -30,7 +30,7 @@ function loadContext({ lastReportPath, agentDb, notesPath }) {
 export function createHandler(deps) {
   const {
     agentDb, model,
-    ownerName, replyLanguage,
+    ownerName, workerName, replyLanguage,
     rulesPath, notesPath, sortDbPath, lastReportPath,
     graphGet, graphPost,
     runReport, runAudit, drainOutbox, send,
@@ -44,7 +44,7 @@ export function createHandler(deps) {
       const context = loadContext({ lastReportPath, agentDb, notesPath });
 
       // 2. Parse intent
-      const intent = await parseIntent({ model, userText: text, context, ownerName, replyLanguage });
+      const intent = await parseIntent({ model, userText: text, context, ownerName, replyLanguage, workerName });
 
       // 3. Clarification or no-ops — return reply_text only
       if (intent.needs_clarification || intent.ops.length === 0) {
@@ -58,7 +58,7 @@ export function createHandler(deps) {
         runReport, runAudit, drainOutbox, send,
         outboxDir,
         deepVerify: deepVerify ?? (async (claim, emailCtx) => {
-          return runDeepVerify({ model, claim, context: emailCtx });
+          return runDeepVerify({ model, claim, context: emailCtx, workerName });
         }),
         runInspection: deps.runInspection ?? runInspection,
         model,

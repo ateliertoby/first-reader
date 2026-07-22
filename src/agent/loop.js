@@ -114,7 +114,7 @@ export async function runLoop({
   // Load config
   let agentConfig;
   try { agentConfig = loadAgentConfig(_agentConfigPath); }
-  catch { agentConfig = { model: 'claude-sonnet-4-6', timezone: 'Asia/Hong_Kong', idleHours: 24, renderDeadlineHours: 8, freshLookbackHours: 12, ownerName: 'the user', replyLanguage: 'English' }; }
+  catch { agentConfig = { model: 'claude-sonnet-4-6', timezone: 'Asia/Hong_Kong', idleHours: 24, renderDeadlineHours: 8, freshLookbackHours: 12, ownerName: 'the user', workerName: 'worker', replyLanguage: 'English' }; }
 
   const tz = _timezone ?? agentConfig.timezone;
 
@@ -129,6 +129,7 @@ export async function runLoop({
     agentDb: db,
     model: agentConfig.model,
     ownerName: agentConfig.ownerName,
+    workerName: agentConfig.workerName,
     replyLanguage: agentConfig.replyLanguage,
     rulesPath: path.join(PROJECT_ROOT, 'config', 'rules.json'),
     notesPath,

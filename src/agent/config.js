@@ -41,6 +41,7 @@ export function loadAgentConfig(configPath) {
     renderDeadlineHours: typeof cfg.renderDeadlineHours === 'number' && cfg.renderDeadlineHours > 0 ? cfg.renderDeadlineHours : 8,
     readBodyCap: typeof cfg.readBodyCap === 'number' && cfg.readBodyCap > 0 ? cfg.readBodyCap : 40,
     ownerName: (typeof cfg.ownerName === 'string' && cfg.ownerName.trim() !== '') ? cfg.ownerName : 'the user',
+    workerName: (typeof cfg.workerName === 'string' && cfg.workerName.trim() !== '') ? cfg.workerName : 'worker',
     replyLanguage: (typeof cfg.replyLanguage === 'string' && cfg.replyLanguage.trim() !== '') ? cfg.replyLanguage : 'English',
   };
 }
