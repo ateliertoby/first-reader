@@ -124,7 +124,7 @@ describe('full happy cycle', () => {
     assert.strictEqual(claudeCalls[0].userContent, 'test user content');
     // system file had correct content (read inside mock before cleanup)
     assert.strictEqual(capturedSystemContent, 'test system prompt');
-    assert.ok(claudeCalls[0].systemFile.includes('outlook-worker-sys-'));
+    assert.ok(claudeCalls[0].systemFile.includes('first-reader-worker-sys-'));
 
     // Atomic write-back: find the ssh call with 'cat >'
     const writeCall = sshCalls.find((c) => c.args[1].includes('cat >'));

@@ -119,7 +119,7 @@ async function processJob(request, deps) {
   const { id, model, tools, system, user } = request;
 
   // Write system prompt to local temp file for --system-prompt-file
-  const tmpFile = path.join(os.tmpdir(), `outlook-worker-sys-${id}.txt`);
+  const tmpFile = path.join(os.tmpdir(), `first-reader-worker-sys-${id}.txt`);
   fs.writeFileSync(tmpFile, system);
 
   try {

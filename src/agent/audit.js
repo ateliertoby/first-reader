@@ -24,33 +24,6 @@ export function _setAuditTransportForTesting(fn) {
   _testTransport = fn;
 }
 
-const AUDIT_TOOL = {
-  name: 'folder_audit',
-  description: 'Judge (sender, subject-pattern) groups against the owner\'s classification criteria',
-  input_schema: {
-    type: 'object',
-    properties: {
-      suspects: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            folder: { type: 'string' },
-            sender: { type: 'string' },
-            subject_sample: { type: 'string' },
-            count: { type: 'integer' },
-            suggested: { type: 'string', enum: ['accounting', 'notifications', 'inbox'] },
-            reason: { type: 'string' }
-          },
-          required: ['folder', 'sender', 'subject_sample', 'count', 'suggested', 'reason']
-        }
-      },
-      clean: { type: 'boolean' }
-    },
-    required: ['suspects', 'clean']
-  }
-};
-
 function buildAuditSystemPrompt(ownerName) {
   return `You are auditing ${ownerName}'s email folder assignments for correctness.
 

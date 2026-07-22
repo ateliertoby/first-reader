@@ -1,4 +1,4 @@
-# Outlook CLI Setup
+# First Reader Setup
 
 ## 1. Register Azure App (one-time)
 

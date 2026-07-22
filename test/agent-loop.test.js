@@ -30,9 +30,14 @@ describe('runLoop', () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-reader-loop-'));
+    // Tests that reach the default handler must never touch the real LLM
+    // queue — an unmocked intent call writes a live request file and blocks
+    // 90s per message waiting for a worker that will never answer.
+    _setIntentTransportForTesting(() => ({ ops: [], reply_text: '', needs_clarification: false }));
   });
 
   afterEach(() => {
+    _setIntentTransportForTesting(null);
     fs.rmSync(tmpDir, { recursive: true });
   });
 
@@ -70,6 +75,7 @@ describe('runLoop', () => {
       _agentDbPath: dbPath,
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: path.join(tmpDir, 'outbox'),
+      _queueDir: path.join(tmpDir, 'llm-queue'),
       _maxPolls: 1,
       _timezone: 'Asia/Hong_Kong',
       _getNow: () => '2026-07-18T10:00:00Z',
@@ -97,6 +103,7 @@ describe('runLoop', () => {
       _agentDbPath: path.join(tmpDir, 'agent.db'),
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: outboxDir,
+      _queueDir: path.join(tmpDir, 'llm-queue'),
       _maxPolls: 1,
       _timezone: 'Asia/Hong_Kong',
     });
@@ -124,6 +131,7 @@ describe('runLoop', () => {
       _agentDbPath: path.join(tmpDir, 'agent.db'),
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: path.join(tmpDir, 'outbox'),
+      _queueDir: path.join(tmpDir, 'llm-queue'),
       _maxPolls: 1,
       _timezone: 'Asia/Hong_Kong',
     });
@@ -145,6 +153,7 @@ describe('runLoop', () => {
       _agentDbPath: path.join(tmpDir, 'agent.db'),
       _stateFile: stateFile,
       _outboxDir: path.join(tmpDir, 'outbox'),
+      _queueDir: path.join(tmpDir, 'llm-queue'),
       _maxPolls: 1,
       _timezone: 'Asia/Hong_Kong',
     });
@@ -168,6 +177,7 @@ describe('runLoop', () => {
       _agentDbPath: path.join(tmpDir, 'agent2.db'),
       _stateFile: stateFile,
       _outboxDir: path.join(tmpDir, 'outbox'),
+      _queueDir: path.join(tmpDir, 'llm-queue'),
       _maxPolls: 1,
       _timezone: 'Asia/Hong_Kong',
     });
@@ -185,6 +195,7 @@ describe('runLoop', () => {
       _agentDbPath: path.join(tmpDir, 'agent.db'),
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: path.join(tmpDir, 'outbox'),
+      _queueDir: path.join(tmpDir, 'llm-queue'),
       _maxPolls: 1,
       _timezone: 'Asia/Hong_Kong',
       onMessage: async (text, ctx) => {
@@ -208,6 +219,7 @@ describe('runLoop', () => {
       _agentDbPath: path.join(tmpDir, 'agent.db'),
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: path.join(tmpDir, 'outbox'),
+      _queueDir: path.join(tmpDir, 'llm-queue'),
       _maxPolls: 1,
       _timezone: 'Asia/Hong_Kong',
       onMessage: async () => null,
@@ -225,6 +237,7 @@ describe('runLoop', () => {
       _agentDbPath: dbPath,
       _stateFile: path.join(tmpDir, 'state.json'),
       _outboxDir: path.join(tmpDir, 'outbox'),
+      _queueDir: path.join(tmpDir, 'llm-queue'),
       _maxPolls: 1,
       _timezone: 'Asia/Hong_Kong',
     });

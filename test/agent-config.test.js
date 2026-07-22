@@ -137,7 +137,7 @@ describe('loadAgentConfig', () => {
 });
 
 describe('requireEnv', () => {
-  const KEY = '__OUTLOOK_CLI_TEST_REQUIRE_ENV__';
+  const KEY = '__FIRST_READER_TEST_REQUIRE_ENV__';
 
   afterEach(() => {
     delete process.env[KEY];
