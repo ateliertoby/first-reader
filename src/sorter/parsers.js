@@ -14,6 +14,45 @@ function parseMox(body, dateStr) {
       type: 'payment'
     };
   }
+  // Incoming transfer: body starts with subject echo "收到款項" + emoji/spaces
+  // before the payer name. Anchor on the echo, then [^\p{L}\p{N}]* eats the
+  // non-letter/digit run (spaces, emoji), so (.+?) captures only the payer name.
+  const incomeMatch = body.match(/收到款項[^\p{L}\p{N}]*(.+?)已向你付款(HKD|USD)([\d,.]+)/u);
+  if (incomeMatch) {
+    return {
+      date: extractDate(dateStr),
+      merchant: incomeMatch[1].trim(),
+      amount: parseFloat(incomeMatch[3].replace(/,/g, '')),
+      currency: incomeMatch[2],
+      source: 'Mox',
+      type: 'income'
+    };
+  }
+  const refundMatch = body.match(/你獲(.+?)退款(HKD|USD)([\d,.]+)/);
+  if (refundMatch) {
+    return {
+      date: extractDate(dateStr),
+      merchant: refundMatch[1].trim(),
+      amount: parseFloat(refundMatch[3].replace(/,/g, '')),
+      currency: refundMatch[2],
+      source: 'Mox',
+      type: 'refund'
+    };
+  }
+  // Outgoing FPS transfer: "你已成功在...向NAME (+852 ...)付款HKD..."
+  // Anchored on 你已成功在 to avoid collision with income branch's 已向你付款.
+  // Optional trailing parenthesized phone number stripped from payee name.
+  const transferMatch = body.match(/你已成功在.+?向(.+?)(?:\s*\([^)]*\))?\s*付款(HKD|USD)([\d,.]+)/);
+  if (transferMatch) {
+    return {
+      date: extractDate(dateStr),
+      merchant: transferMatch[1].trim(),
+      amount: parseFloat(transferMatch[3].replace(/,/g, '')),
+      currency: transferMatch[2],
+      source: 'Mox',
+      type: 'transfer'
+    };
+  }
   return null;
 }
 
@@ -269,6 +308,38 @@ function parseBowtie(body, dateStr) {
   return null;
 }
 
+function parseCMHK(body, dateStr) {
+  // Anchor on 應繳款項 to capture the total due, not line-item HK$ figures
+  const match = body.match(/應繳款項HK\$\s*([\d,.]+)/);
+  if (match) {
+    return {
+      date: extractDate(dateStr),
+      merchant: 'CMHK',
+      amount: parseFloat(match[1].replace(/,/g, '')),
+      currency: 'HKD',
+      source: 'CMHK',
+      type: 'bill'
+    };
+  }
+  return null;
+}
+
+function parseOrb(body, dateStr) {
+  // Bare "$" assumed USD — Orb invoices from US-based vendors (e.g. fal.ai)
+  const match = body.match(/Invoice from (.+?):\s*\$([\d,.]+)/);
+  if (match) {
+    return {
+      date: extractDate(dateStr),
+      merchant: match[1].trim(),
+      amount: parseFloat(match[2].replace(/,/g, '')),
+      currency: 'USD',
+      source: 'Orb',
+      type: 'invoice'
+    };
+  }
+  return null;
+}
+
 const PARSERS = [
   { sender: 'mox.com', parse: parseMox },
   { sender: 'antbank', parse: parseAntBank },
@@ -286,6 +357,8 @@ const PARSERS = [
   { sender: 'anthropic', parse: parseStripeReceipt },
   { sender: 'hushed', parse: parseStripeReceipt },
   { sender: 'stripe.com', parse: parseStripeReceipt },
+  { sender: 'withorb', parse: parseOrb },
+  { sender: 'chinamobile', parse: parseCMHK },
 ];
 
 export function parseTransaction(senderAddress, subject, body, dateStr) {

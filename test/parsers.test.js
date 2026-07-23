@@ -226,6 +226,150 @@ describe('parseTransaction', () => {
     assert.strictEqual(result.type, 'topup');
   });
 
+  test('Mox incoming transfer', () => {
+    const result = parseTransaction(
+      'notify@mox.com',
+      '收到款項',
+      '收到款項 💰❤️ MR J*** W*** L**已向你付款HKD500.00。若你收到懷疑偽冒我們身份的電郵或電話，請致電28888228',
+      '2026-04-10T14:20:00Z'
+    );
+    assert.deepStrictEqual(result, {
+      date: '2026-04-10',
+      merchant: 'MR J*** W*** L**',
+      amount: 500.00,
+      currency: 'HKD',
+      source: 'Mox',
+      type: 'income'
+    });
+  });
+
+  test('Mox incoming transfer with CJK payer name', () => {
+    const result = parseTransaction(
+      'notify@mox.com',
+      '收到款項',
+      '收到款項 💰❤️ 陳大文已向你付款HKD100.00。若你收到懷疑偽冒我們身份的電郵或電話，請致電28888228',
+      '2026-06-15T08:00:00Z'
+    );
+    assert.strictEqual(result.merchant, '陳大文');
+    assert.strictEqual(result.amount, 100.00);
+    assert.strictEqual(result.currency, 'HKD');
+    assert.strictEqual(result.type, 'income');
+  });
+
+  test('Mox incoming transfer merchant excludes subject echo prefix', () => {
+    const result = parseTransaction(
+      'notify@mox.com',
+      '收到款項',
+      '收到款項 💰❤️ MS A*** B**已向你付款HKD1,200.00。若你收到懷疑偽冒我們身份的電郵或電話，請致電28888228',
+      '2026-05-01T09:00:00Z'
+    );
+    assert.strictEqual(result.merchant, 'MS A*** B**');
+    assert.ok(!result.merchant.includes('收到款項'), 'merchant must not contain subject echo');
+  });
+
+  test('Mox refund', () => {
+    const result = parseTransaction(
+      'notify@mox.com',
+      '退款',
+      '退款 你獲BEST SHOP退款HKD299.00。如懷疑電28888228若你收到',
+      '2026-04-12T11:30:00Z'
+    );
+    assert.deepStrictEqual(result, {
+      date: '2026-04-12',
+      merchant: 'BEST SHOP',
+      amount: 299.00,
+      currency: 'HKD',
+      source: 'Mox',
+      type: 'refund'
+    });
+  });
+
+  test('Mox outgoing FPS transfer', () => {
+    const result = parseTransaction(
+      'notify@mox.com',
+      '轉數成功',
+      '轉數成功 💸 你已成功在02 Jul 2026 14:05HKT向WONG T*** K** (+852 9123****)付款HKD3,000.00。「轉數快」參考號碼：FRN00000000000',
+      '2026-07-02T14:05:00Z'
+    );
+    assert.deepStrictEqual(result, {
+      date: '2026-07-02',
+      merchant: 'WONG T*** K**',
+      amount: 3000.00,
+      currency: 'HKD',
+      source: 'Mox',
+      type: 'transfer'
+    });
+  });
+
+  test('Mox income body does not match transfer branch', () => {
+    const incomeResult = parseTransaction(
+      'notify@mox.com',
+      '收到款項',
+      '收到款項 💰❤️ LAM S** M**已向你付款HKD800.00。若你收到懷疑偽冒我們身份的電郵或電話，請致電28888228',
+      '2026-07-03T10:00:00Z'
+    );
+    assert.strictEqual(incomeResult.type, 'income', 'income body must hit income branch, not transfer');
+    assert.strictEqual(incomeResult.merchant, 'LAM S** M**');
+  });
+
+  test('Mox transfer body does not match income branch', () => {
+    const transferResult = parseTransaction(
+      'notify@mox.com',
+      '轉數成功',
+      '轉數成功 💸 你已成功在05 Jul 2026 09:30HKT向LEE W** (+852 9876****)付款HKD150.00。「轉數快」參考號碼：FRN11111111111',
+      '2026-07-05T09:30:00Z'
+    );
+    assert.strictEqual(transferResult.type, 'transfer', 'transfer body must hit transfer branch, not income');
+    assert.strictEqual(transferResult.merchant, 'LEE W**');
+  });
+
+  test('CMHK monthly bill', () => {
+    const result = parseTransaction(
+      'billing@hk.chinamobile.com',
+      '中國移動香港07月份賬單通知',
+      '尊敬的客戶，您的07月份賬單已備妥。應繳款項HK$ 188.00 繳款日期03/08/2026賬單發單日期04/07/2026',
+      '2026-07-04T00:00:00Z'
+    );
+    assert.deepStrictEqual(result, {
+      date: '2026-07-04',
+      merchant: 'CMHK',
+      amount: 188.00,
+      currency: 'HKD',
+      source: 'CMHK',
+      type: 'bill'
+    });
+  });
+
+  test('CMHK bill ignores decoy HK$ amounts after anchor', () => {
+    // Body has line-item HK$68.00 and 前期累計 HK$0.00 after the 應繳款項 total
+    const body = '尊敬的客戶，您的06月份賬單已備妥。應繳款項HK$ 196.00 繳款日期03/07/2026賬單發單日期04/06/2026 服務費 HK$68.00 增值服務 HK$128.00 前期累計款項HK$0.00';
+    const result = parseTransaction(
+      'billing@hk.chinamobile.com',
+      '中國移動香港06月份賬單通知',
+      body,
+      '2026-06-04T00:00:00Z'
+    );
+    assert.strictEqual(result.amount, 196.00, 'must match 應繳款項 anchor, not later HK$ figures');
+    assert.strictEqual(result.type, 'bill');
+  });
+
+  test('Orb invoice', () => {
+    const result = parseTransaction(
+      'invoices+cust_abc123@withorb.com',
+      'New invoice from Acme Cloud, Inc.',
+      'Invoice from Acme Cloud, Inc.: $25.00 due Aug 01, 2026. Invoice No. ABCDEF-00012 $25.00 Payment due Aug 01, 2026 View invoice Memo: pi_test123 Powered by Orb.',
+      '2026-07-20T00:00:00Z'
+    );
+    assert.deepStrictEqual(result, {
+      date: '2026-07-20',
+      merchant: 'Acme Cloud, Inc.',
+      amount: 25.00,
+      currency: 'USD',
+      source: 'Orb',
+      type: 'invoice'
+    });
+  });
+
   test('returns null for unparseable body', () => {
     const result = parseTransaction(
       'unknown@example.com',
