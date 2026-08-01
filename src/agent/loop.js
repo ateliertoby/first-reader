@@ -66,6 +66,18 @@ export function msUntilNextMonthly(reportTime, timezone, now) {
   return totalMs;
 }
 
+// Node clamps setTimeout delays above 2^31-1 ms (~24.8 days) to 1 ms, so a
+// full-month gap (28-31 days) cannot be armed in one shot — the timer would
+// fire instantly and loop. Oversized delays arm at the cap and wake without
+// firing; the caller recomputes and re-arms until the real slot is in range.
+export const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+// Pure — split a possibly-oversized delay into the next arm step
+export function nextTimerStep(ms) {
+  if (ms > MAX_TIMEOUT_MS) return { delayMs: MAX_TIMEOUT_MS, fire: false };
+  return { delayMs: ms, fire: true };
+}
+
 // Idle trigger — fire a report when the owner hasn't checked in a while
 export function shouldTriggerIdle(agentDb, now, idleHours) {
   // Never fire while a render is already in flight
@@ -192,16 +204,18 @@ export async function runLoop({
   let auditTimer = null;
   function scheduleAudit() {
     if (!productionMode) return;
-    const ms = msUntilNextMonthly(AUDIT_TIME, tz, new Date());
+    const step = nextTimerStep(msUntilNextMonthly(AUDIT_TIME, tz, new Date()));
     auditTimer = setTimeout(async () => {
-      try {
-        await auditFn({ dry: false });
-        await channel.drainOutbox(outboxDir);
-      } catch (err) {
-        console.error(`Scheduled audit error: ${err.message}`);
+      if (step.fire) {
+        try {
+          await auditFn({ dry: false });
+          await channel.drainOutbox(outboxDir);
+        } catch (err) {
+          console.error(`Scheduled audit error: ${err.message}`);
+        }
       }
       scheduleAudit();
-    }, ms);
+    }, step.delayMs);
     auditTimer.unref();
   }
 

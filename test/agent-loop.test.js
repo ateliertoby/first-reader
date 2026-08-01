@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { msUntilNextMonthly, runLoop } from '../src/agent/loop.js';
+import { msUntilNextMonthly, nextTimerStep, MAX_TIMEOUT_MS, runLoop } from '../src/agent/loop.js';
 import { AgentDB } from '../src/agent/db.js';
 import { _setIntentTransportForTesting } from '../src/agent/intent.js';
 
@@ -20,6 +20,25 @@ describe('msUntilNextMonthly', () => {
     // 2026-08-01T02:00:00Z = 10:00 HKT, target 09:00 -> next month
     const ms = msUntilNextMonthly('09:00', 'Asia/Hong_Kong', '2026-08-01T02:00:00Z');
     assert.ok(ms > 29 * 24 * 60 * 60 * 1000); // at least 29 days
+  });
+});
+
+// --- nextTimerStep ---
+
+describe('nextTimerStep', () => {
+  test('delay within setTimeout range: arm exact delay and fire', () => {
+    const tenDays = 10 * 24 * 60 * 60 * 1000;
+    assert.deepStrictEqual(nextTimerStep(tenDays), { delayMs: tenDays, fire: true });
+  });
+
+  test('monthly gap exceeds the 32-bit setTimeout cap: arm at cap, no fire', () => {
+    // A full-month re-arm (28-31 days) always exceeds 2^31-1 ms; Node clamps
+    // such delays to 1ms, which made the audit re-fire in a tight loop.
+    const ms = msUntilNextMonthly('09:00', 'Asia/Hong_Kong', '2026-08-01T02:00:00Z');
+    assert.ok(ms > MAX_TIMEOUT_MS);
+    const step = nextTimerStep(ms);
+    assert.strictEqual(step.fire, false);
+    assert.ok(step.delayMs <= MAX_TIMEOUT_MS);
   });
 });
 
