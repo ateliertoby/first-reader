@@ -1,4 +1,5 @@
-import { graphGet, graphPatch, buildGraphUrl } from '../graph.js';
+import { graphPatch } from '../graph.js';
+import { resolveInboxIndex } from '../inbox-listing.js';
 
 export async function markRead(index) {
   await setReadStatus(index, true);
@@ -11,15 +12,6 @@ export async function markUnread(index) {
 }
 
 async function setReadStatus(index, isRead) {
-  const count = Math.max(parseInt(index), 20);
-  const url = buildGraphUrl('/me/messages', { top: count, orderby: 'receivedDateTime desc', select: 'id' });
-  const result = await graphGet(url);
-
-  const idx = parseInt(index) - 1;
-  if (idx < 0 || idx >= result.value.length) {
-    console.error(`Invalid message number: ${index}`);
-    process.exit(1);
-  }
-
-  await graphPatch(`/me/messages/${result.value[idx].id}`, { isRead });
+  const msg = await resolveInboxIndex(index);
+  await graphPatch(`/me/messages/${msg.id}`, { isRead });
 }

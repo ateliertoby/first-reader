@@ -1,14 +1,8 @@
-import { graphGet, buildGraphUrl } from '../graph.js';
+import { listInboxMessages } from '../inbox-listing.js';
 import { formatInboxRow } from '../format.js';
 
 export async function inbox(options) {
-  const count = options.number || 20;
-  const params = { top: count, orderby: 'receivedDateTime desc', select: 'id,subject,from,receivedDateTime,isRead' };
-  if (options.unread) params.filter = 'isRead eq false';
-
-  const url = buildGraphUrl('/me/mailFolders/inbox/messages', params);
-  const result = await graphGet(url);
-  const messages = result.value;
+  const messages = await listInboxMessages({ count: options.number, unread: options.unread });
 
   if (messages.length === 0) {
     console.log('No messages.');
