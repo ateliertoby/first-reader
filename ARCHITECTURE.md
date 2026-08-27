@@ -11,11 +11,12 @@ Four constraints shape everything below:
 
 ## Processes and stores
 
-Three long-running processes (launchd plists in the repo root):
+Three long-running processes (launchd plists in the repo root) and one periodic pass (systemd units in `deploy/`):
 
 | Process | Entry | Where it runs |
 |---|---|---|
 | Sort cron | `bin/sort-cron.sh` → `email sort` | mail server |
+| Ledger timer | `bin/ledger-cron.sh` → `email ledger` | mail server |
 | Agent loop | `email agent-loop` | mail server |
 | LLM worker | `email llm-worker` | the machine with the `claude` login |
 
@@ -31,6 +32,8 @@ File-based mailboxes connect the processes:
 - `data/llm-queue/{requests,results}/` — LLM jobs, written atomically (tmp + rename).
 - `data/agent-outbox/` — Telegram messages awaiting delivery. Deleted only after a successful send; corrupt files are sidetracked, not allowed to wedge the queue.
 - `data/sent-reports/` — archive of every delivered report. The outbox deletes on send, so without this there would be no record of what the owner actually received — which would make iterating on report quality impossible.
+- `data/feed/<id>.jsonl` — published bank credits, one JSON line per transaction reference, append-only and never rewritten. Written only by the ledger pass, read by other programs on the host.
+- `data/ledger-state.json` — the ledger pass's watermark, kept separately from `sort-state.json` because the two passes advance on different cadences.
 
 ## Data flow
 
@@ -42,6 +45,15 @@ File-based mailboxes connect the processes:
 4. Rule matching: domain suffix match; bucket priority `accounting > notifications > keep` with longest-domain tiebreak; optional subject include/exclude regexes.
 5. Every decision — including "did nothing" — lands in `sort_log`. Moves record the **post-move** message id: Graph assigns a new id when a message changes folder, and `unsort` could not find the message otherwise.
 6. The watermark advances only when a pass completes.
+
+### Ledger pass
+
+1. Runs every 15 minutes on its own watermark (minus 1 h overlap), with **no dwell**: the dwell exists so the owner sees mail before it is moved, and this pass moves nothing. `--since` overrides the watermark and is the backfill switch.
+2. Per configured feed, fetch `/me/messages` — every folder, not just the inbox — filtered on `receivedDateTime ge start and from/emailAddress/address eq '<sender>'`, ascending, paged. Scanning all folders is what lets a message the sorter already filed still be found.
+3. Parse the body and keep the result only if it is income, carries a reference, and its memo matches the feed's. Anything else from that sender is recorded but not published.
+4. Record into `transactions` (idempotent by `(source, ref)`), then append one line per reference not already in the feed file. A credit the sorter had already filed under an older parser is *adopted* rather than inserted: the sorter records an accounting email before moving it, so that row carries the pre-move message id and no reference, and inserting again would duplicate the event. Adoption matches on source, amount, subject and a two-day date window, and upgrades the row in place.
+5. The **feed file**, not the transactions table, is the record of what was published: a crash between the insert and the append is repaired by the next run re-reading it. Each line is one `appendFileSync` under `PIPE_BUF`, so the append is atomic; a file that nonetheless ends mid-line is closed off with a newline before the next append, so a damaged line can never swallow the record that follows it.
+6. The watermark advances only after every feed completed without a Graph error, and the command exits non-zero otherwise so the timer shows failed. The reference dedupe makes the repeated scan harmless.
 
 ### Agent report
 
@@ -85,6 +97,8 @@ Telegram long-poll → messages from the configured chat id only (everything els
 bin/email            CLI entry point (commander)
 bin/*.sh             launchd wrappers — source .env, fix PATH
 src/commands/        one file per subcommand
+src/commands/ledger.js  ledger pass — window, fetch, record, publish feeds
+deploy/              systemd units for the ledger timer (mail server)
 src/graph.js         Microsoft Graph client (retry on 429/5xx, pagination)
 src/auth.js          OAuth2 device-code flow; token cache in ~/.first-reader/
 src/format.js        terminal rendering for CLI output

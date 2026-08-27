@@ -16,6 +16,20 @@ The project grew in three layers, and each works without the ones above it:
 
 1. **CLI** — read, send, search, and manage Outlook.com mail from the terminal, via Microsoft Graph with device-code OAuth. Useful on its own.
 2. **Sorter** — a deterministic rules engine on a launchd/cron schedule. Rules are data (`config/rules.json`): domain matches, subject regexes, guard words. Bank and payment emails become rows in a transactions database via per-sender parsers.
+
+   Alongside it runs the **ledger pass** (`email ledger`, every 15 minutes). The sorter waits out a dwell so the owner sees mail before it is moved; a bank credit is a fact that other programs want as soon as it lands, and that wait costs hours. The ledger pass therefore reads on its own watermark, across every folder, and **never moves, deletes, or marks anything** — it records bank and payment emails immediately, and publishes the ones a *feed* claims to `data/feed/<id>.jsonl` for other programs on the same host.
+
+   A feed is declared in `config/rules.json` beside the sort rules — it names a sender and a message-to-payee memo, because "whose money is this" is a classification like any other. Each claimed credit becomes one append-only JSON line:
+
+   ```json
+   {"v":1,"feed":"ride-dispatch","ref":"202601010001234567","platform":"ride",
+    "amount":1234.50,"currency":"HKD","value_date":"2026-01-01",
+    "payer":"A B**** C***** L","memo":"SUPPLIERPAY","email_id":"AQMk…",
+    "received_at":"2026-01-02T00:00:54Z","recorded_at":"2026-01-02T00:15:03Z"}
+   ```
+
+   The bank's transaction reference is the identity, not the Graph message id — an id changes when the message is moved. Consumers re-read the file whenever it changes and dedupe on `ref`, so re-runs and backfills (`email ledger --since`) collapse onto one row.
+
 3. **Agent** — the first reader. An LLM reads what the rules didn't classify, renders the daily report, and holds a conversation over Telegram: "keep those", "add a rule for that sender", "is this one safe to open?".
 
 Failure degrades downward, never sideways: if the agent dies, the sorter keeps filing; if the sorter dies, mail just stays in the inbox. Nothing in the pipeline ever deletes mail.
@@ -104,6 +118,8 @@ email rule list             show rules and guard words
 email rule add              add a sort rule
 email unsort --sender X     undo sort moves, pin against re-sorting
 email reparse --sender X    backfill transactions after adding a parser
+email ledger                record feed senders' mail and publish it (never moves mail)
+email ledger --since D      backfill the ledger and feeds from a date
 email report                sorter activity report
 email agent-report          assemble and render a report once
 email agent-loop            run the Telegram agent daemon
@@ -114,7 +130,7 @@ Then message your bot on Telegram: `/check`, or just talk to it — "check email
 
 ## Architecture
 
-Three long-running processes — sort cron, agent loop, LLM worker — around two SQLite databases, a file-based LLM queue, and a Telegram outbox. The data flow, the file map, and the reasoning behind each design decision are in [ARCHITECTURE.md](ARCHITECTURE.md).
+Three long-running processes — sort cron, agent loop, LLM worker — plus the ledger timer, around two SQLite databases, a file-based LLM queue, published feed files, and a Telegram outbox. The data flow, the file map, and the reasoning behind each design decision are in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Limitations
 
