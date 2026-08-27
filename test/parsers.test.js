@@ -60,6 +60,49 @@ describe('parseTransaction', () => {
     assert.strictEqual(result.type, 'transfer');
   });
 
+  test('HSBC fund transfer credit advice (supplier payment)', () => {
+    const body = 'Fund transfer credit advice Dear Customer, Thank you for using our payment services. ' +
+      'We’ve credited your account with a fund transfer. Please see the details below: ' +
+      'Transaction reference: 202601010001234567Payment date: 2026-01-01Payer name: A B**** C***** L' +
+      'Payment amount: HKD1,234.50Credit account number: 000-000XXX-XXXMessage to payee: SUPPLIERPAY' +
+      'Please log on to HSBC HK App or HSBC Online Banking for details.';
+    const result = parseTransaction(
+      'payment.notification@hsbc.com.hk',
+      'Fund transfer credit advice轉賬存款通知書',
+      body,
+      '2026-01-02T00:00:54Z'
+    );
+    assert.deepStrictEqual(result, {
+      date: '2026-01-01',
+      merchant: 'A B**** C***** L',
+      amount: 1234.50,
+      currency: 'HKD',
+      source: 'HSBC',
+      type: 'income',
+      ref: '202601010001234567',
+      memo: 'SUPPLIERPAY'
+    });
+  });
+
+  test('HSBC credit advice with line breaks between fields', () => {
+    const body = 'Fund transfer credit advice\n\nTransaction reference: 202601010001234567\n\n' +
+      'Payment date: 2026-01-01\n\nPayer name: A B**** C***** L\n\nPayment amount: HKD1,234.50\n\n' +
+      'Credit account number: 000-000XXX-XXX\n\nMessage to payee: \n\nPlease log on to HSBC HK App';
+    const result = parseTransaction('payment.notification@hsbc.com.hk', 'x', body, '2026-01-02T00:00:54Z');
+    assert.strictEqual(result.ref, '202601010001234567');
+    assert.strictEqual(result.merchant, 'A B**** C***** L');
+    assert.strictEqual(result.memo, '');
+    assert.strictEqual(result.date, '2026-01-01');
+  });
+
+  test('HSBC credit advice without a transaction reference falls through to the generic branch', () => {
+    const body = 'Fund transfer credit advice Payment amount: HKD854.43 Account no. credited: 000-000XXX-XXX';
+    const result = parseTransaction('HSBC@notification.hsbc.com.hk', 'x', body, '2026-01-02T00:00:54Z');
+    assert.strictEqual(result.type, 'payment');
+    assert.strictEqual(result.amount, 854.43);
+    assert.strictEqual('ref' in result, false);
+  });
+
   test('PayPal receipt', () => {
     const body = '你已支付 $11.48 USD 給 Domainly, Inc\n交易 ID\n9XP00000A0000000P';
     const result = parseTransaction(

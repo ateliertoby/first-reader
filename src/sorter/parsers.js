@@ -95,6 +95,33 @@ function parseAntBank(body, dateStr) {
 }
 
 function parseHSBC(body, dateStr) {
+  // Supplier-payment credit advice. htmlToText collapses the HTML into runs
+  // where a value is immediately followed by the next label, so every capture
+  // stops at a known label rather than at whitespace. The bank's own reference
+  // and payment date are the identity and the value date of the event; the
+  // email's arrival time is neither.
+  const ref = body.match(/Transaction reference[:：]\s*(\d{6,})/);
+  if (/Fund transfer credit advice/i.test(body) && ref) {
+    const field = (label, stop) =>
+      (body.match(new RegExp(`${label}[:：]\\s*([\\s\\S]*?)\\s*(?=${stop})`)) || [])[1];
+    const payDate = field('Payment date', 'Payer name');
+    const payer = field('Payer name', 'Payment amount');
+    const amount = body.match(/Payment amount[:：]\s*(HKD|USD)\s?([\d,.]+)/);
+    // Currency comes from the amount token so a non-HKD advice is not mislabelled.
+    const memo = field('Message to payee', 'Please log on') ?? '';
+    if (payDate && amount) {
+      return {
+        date: payDate.trim(),
+        merchant: (payer || '').trim() || null,
+        amount: parseFloat(amount[2].replace(/,/g, '')),
+        currency: amount[1],
+        source: 'HSBC',
+        type: 'income',
+        ref: ref[1],
+        memo: memo.trim()
+      };
+    }
+  }
   const match = body.match(/將\s+(HKD)([\d,.]+)\s+轉往\s+(.+?)\s*[。.]/);
   if (match) {
     return {
