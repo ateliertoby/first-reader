@@ -18,6 +18,7 @@ import { unsortCommand } from '../src/commands/unsort.js';
 import { reportCommand } from '../src/commands/report.js';
 import { rescueScanCommand } from '../src/commands/rescue-scan.js';
 import { reparseCommand } from '../src/commands/reparse.js';
+import { ledgerCommand } from '../src/commands/ledger.js';
 import { runAgentReport } from '../src/agent/report.js';
 import { runLoop } from '../src/agent/loop.js';
 import { requireEnv } from '../src/agent/config.js';
@@ -175,6 +176,17 @@ program
   .option('--sender <substring>', 'Filter by sender address substring')
   .option('--dry', 'Show what would be parsed without writing')
   .action(reparseCommand);
+
+program
+  .command('ledger')
+  .description("Record feed senders' transactions and publish them to data/feed/<id>.jsonl (never moves mail)")
+  .option('--since <date>', 'Scan from this date (YYYY-MM-DD) instead of the watermark — the backfill switch')
+  .option('--dry-run', 'Show what would be recorded and published; write nothing')
+  .action(async (opts) => {
+    const totals = await ledgerCommand(opts);
+    // Non-zero exit so the systemd unit shows failed and the watermark stall is visible.
+    if (totals.errors > 0) process.exitCode = 1;
+  });
 
 program
   .command('agent-report')
