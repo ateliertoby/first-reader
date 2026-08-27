@@ -1,0 +1,11 @@
+[Unit]
+Description=first-reader ledger pass (record and publish feed transactions)
+
+[Service]
+Type=oneshot
+User=toby
+WorkingDirectory=/home/toby/first-reader
+Environment=PATH=/home/toby/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash /home/toby/first-reader/bin/ledger-cron.sh
+StandardOutput=append:/home/toby/first-reader/data/ledger.log
+StandardError=append:/home/toby/first-reader/data/ledger.log
