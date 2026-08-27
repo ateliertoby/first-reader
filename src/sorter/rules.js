@@ -86,8 +86,36 @@ export function loadRules(configPath = DEFAULT_CONFIG) {
   }
   const settings = { minAgeHours };
 
+  // Feeds: which transactions are published to another program, and under what
+  // id. "Whose money is this" is a classification, so it lives beside the other
+  // classification decisions rather than in the consumer's config.
+  const feeds = [];
+  const feedIds = new Set();
+  for (const feed of raw.feeds || []) {
+    if (!feed.id) throw new Error('feed missing id');
+    // The id names a file on disk.
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(feed.id)) {
+      throw new Error(`feed id "${feed.id}" must be lowercase letters, digits and dashes (it names a file)`);
+    }
+    if (feedIds.has(feed.id)) throw new Error(`duplicate feed id: ${feed.id}`);
+    feedIds.add(feed.id);
+    if (typeof feed.sender !== 'string' || !feed.sender.includes('@') || !feed.sender.includes('.')) {
+      throw new Error(`feed ${feed.id}: sender must be a full email address`);
+    }
+    if (feed.sender !== feed.sender.toLowerCase()) {
+      throw new Error(`feed ${feed.id}: sender must be lowercase`);
+    }
+    if (typeof feed.memo !== 'string' || !feed.memo) {
+      throw new Error(`feed ${feed.id}: memo must be a non-empty string`);
+    }
+    if (typeof feed.platform !== 'string' || !feed.platform) {
+      throw new Error(`feed ${feed.id}: platform must be a non-empty string`);
+    }
+    feeds.push({ id: feed.id, sender: feed.sender, memo: feed.memo, platform: feed.platform });
+  }
+
   const guards = raw.guards.map(g => g.toLowerCase());
-  return { guards, rules: compiled, settings, raw };
+  return { guards, rules: compiled, settings, feeds, raw };
 }
 
 function domainMatches(emailDomain, ruleDomain) {

@@ -43,5 +43,13 @@
         "importantclient.example.com"
       ]
     }
+  ],
+  "feeds": [
+    {
+      "id": "ride-dispatch",
+      "sender": "payment.notification@hsbc.com.hk",
+      "memo": "SUPPLIERPAY",
+      "platform": "ride"
+    }
   ]
 }

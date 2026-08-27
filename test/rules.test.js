@@ -8,6 +8,17 @@ import { loadRules, classify, subjectKey } from '../src/sorter/rules.js';
 const FIXTURE_PATH = path.join(import.meta.dirname, 'fixtures', 'rules.json');
 const EXAMPLE_PATH = path.join(import.meta.dirname, '..', 'config', 'rules.example.json');
 
+let loadSeq = 0;
+function loadFrom(raw) {
+  const tmp = path.join(os.tmpdir(), `first-reader-rules-${process.pid}-${loadSeq++}.json`);
+  fs.writeFileSync(tmp, JSON.stringify(raw));
+  try {
+    return loadRules(tmp);
+  } finally {
+    fs.unlinkSync(tmp);
+  }
+}
+
 describe('loadRules', () => {
   test('loads and validates config/rules.example.json', () => {
     const config = loadRules(EXAMPLE_PATH);
@@ -126,6 +137,35 @@ describe('loadRules', () => {
     assert.strictEqual(config.rules[0].ignoreGuards, true);
     assert.ok(config.rules[0].subjectExcludeRe);
     fs.unlinkSync(tmp);
+  });
+
+  test('feeds: absent means empty', () => {
+    const cfg = loadFrom({ settings: { minAgeHours: 6 }, guards: [], rules: [] });
+    assert.deepStrictEqual(cfg.feeds, []);
+  });
+
+  test('feeds: valid entry is kept verbatim', () => {
+    const feed = { id: 'ride-dispatch', sender: 'payment.notification@hsbc.com.hk', memo: 'SUPPLIERPAY', platform: 'ride' };
+    const cfg = loadFrom({ settings: {}, guards: [], rules: [], feeds: [feed] });
+    assert.deepStrictEqual(cfg.feeds, [feed]);
+  });
+
+  test('feeds: validation', () => {
+    const bad = (feed, re) => assert.throws(() => loadFrom({ settings: {}, guards: [], rules: [], feeds: [feed] }), re);
+    bad({ sender: 'a@b.c', memo: 'M', platform: 'p' }, /feed missing id/);
+    bad({ id: 'has space', sender: 'a@b.c', memo: 'M', platform: 'p' }, /feed id/);
+    bad({ id: 'x', sender: 'A@B.C', memo: 'M', platform: 'p' }, /lowercase/);
+    bad({ id: 'x', sender: 'not-an-address', memo: 'M', platform: 'p' }, /sender/);
+    bad({ id: 'x', sender: 'a@b.c', memo: '', platform: 'p' }, /memo/);
+    bad({ id: 'x', sender: 'a@b.c', memo: 'M' }, /platform/);
+    assert.throws(() => loadFrom({ settings: {}, guards: [], rules: [],
+      feeds: [{ id: 'x', sender: 'a@b.c', memo: 'M', platform: 'p' }, { id: 'x', sender: 'a@b.c', memo: 'M', platform: 'p' }] }), /duplicate feed id/);
+  });
+
+  test('feeds: config/rules.example.json documents one', () => {
+    const cfg = loadRules(EXAMPLE_PATH);
+    assert.strictEqual(cfg.feeds.length, 1);
+    assert.strictEqual(cfg.feeds[0].id, 'ride-dispatch');
   });
 });
 
